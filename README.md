@@ -1,23 +1,23 @@
-# Rampify — Spec-Driven Development
+# Rampify: Spec-Driven Development
 
 **Define specs. AI builds to spec. Verify with a scan.**
 
-Rampify brings spec-driven development to AI coding workflows. Instead of describing features in chat and hoping for the best, you define structured specifications — with acceptance criteria, affected files, and implementation tasks — that any AI coding tool can query and execute against.
+Rampify brings spec-driven development to AI coding workflows. Instead of describing features in chat and hoping for the best, you define structured specifications with acceptance criteria, affected files, and implementation tasks that any AI coding tool can query and execute against.
 
-Specs can come from you, or from Rampify. Run a scan, and Rampify analyzes your site for issues — missing canonical tags, broken schema markup, meta description problems — and creates specs automatically, each with affected URLs and fix instructions. Your AI picks up the spec and implements the fix. You scan again to verify.
+Specs can come from you, or from Rampify. Run a scan, and Rampify analyzes your site for issues like missing canonical tags, broken schema markup, and meta description problems, then creates specs automatically with affected URLs and fix instructions. Your AI picks up the spec and implements the fix. You scan again to verify.
 
-**Works with any AI coding tool.** Claude Code, Cursor, Copilot, Windsurf — Rampify is the structured layer underneath. Models come and go. Your specs persist.
+**Works with any AI coding tool.** Claude Code, Cursor, Copilot, Windsurf. Rampify is the structured layer underneath. Models come and go. Your specs persist.
 
 ## How it works
 
 ```
 You define a spec (or Rampify creates one from a scan)
     ↓
-AI queries the spec via MCP — knows what to build, which files to touch
+AI queries the spec via MCP, knows what to build and which files to touch
     ↓
 AI implements the change
     ↓
-You commit — the commit links back to the spec
+You commit, and the commit links back to the spec
     ↓
 Scan again to verify the fix
 ```
@@ -26,15 +26,15 @@ Scan again to verify the fix
 
 ### Specs sidebar
 
-Browse all feature specs grouped by status — Planned, In Progress, Completed. Each spec shows priority, progress, and affected files. Click to open in the Rampify dashboard. Toggle resolved specs on/off to keep the sidebar focused.
+Browse all feature specs grouped by status (Planned, In Progress, Completed). Each spec shows priority, progress, and affected files. Click to open in the Rampify dashboard. Toggle resolved specs on/off to keep the sidebar focused.
 
 ### Auto-generated specs from scans
 
-Rampify scans your site and creates specs for issues it finds — missing structured data, broken meta tags, canonical tag issues, and more. Each spec includes affected URLs and fix instructions your AI can act on immediately.
+Rampify scans your site and creates specs for issues it finds, including missing structured data, broken meta tags, and canonical tag issues. Each spec includes affected URLs and fix instructions your AI can act on immediately.
 
 ### One-click AI context
 
-Copy a spec reference into Claude or Cursor with a single click. Your AI retrieves the full spec — title, description, acceptance criteria, tasks, affected files, tech stack — and implements against it.
+Copy a spec reference into Claude or Cursor with a single click. Your AI retrieves the full spec (title, description, acceptance criteria, tasks, affected files, tech stack) and implements against it.
 
 ### MCP server setup
 
@@ -66,7 +66,7 @@ Search "Rampify" in the Extensions panel, or install from the [VS Code Marketpla
 
 1. Open Command Palette
 2. Run **Rampify: Set Up MCP Server**
-3. Select your editor — the wizard handles the rest
+3. Select your editor, and the wizard handles the rest
 
 Now your AI coding tools can query specs, run scans, and generate fixes directly.
 
