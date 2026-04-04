@@ -1,0 +1,210 @@
+{
+  "name": "rampify",
+  "displayName": "Rampify — Spec-Driven Development",
+  "description": "Spec-driven development for AI coding tools. Define specs, track issues, and verify fixes — so AI builds what you actually intended.",
+  "version": "0.3.0",
+  "publisher": "rampify",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Linters",
+    "Testing"
+  ],
+  "keywords": [
+    "spec-driven development",
+    "feature specs",
+    "ai coding",
+    "mcp",
+    "cursor",
+    "claude",
+    "seo",
+    "structured data",
+    "ai agents",
+    "ai workflow"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/rampify-dev/rampify-vscode"
+  },
+  "homepage": "https://www.rampify.dev",
+  "bugs": {
+    "url": "https://github.com/rampify-dev/rampify-vscode/issues"
+  },
+  "galleryBanner": {
+    "color": "#1e1e1e",
+    "theme": "dark"
+  },
+  "pricing": "Free",
+  "icon": "resources/icon.png",
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "configuration": {
+      "title": "Rampify",
+      "properties": {
+        "rampify.apiKey": {
+          "type": "string",
+          "default": "",
+          "description": "Rampify API key for authentication",
+          "scope": "application"
+        },
+        "rampify.environment": {
+          "type": "string",
+          "enum": [
+            "production",
+            "staging",
+            "local"
+          ],
+          "default": "production",
+          "description": "API environment to connect to",
+          "scope": "application"
+        },
+        "rampify.localApiUrl": {
+          "type": "string",
+          "default": "http://localhost:3000",
+          "description": "Local API URL (when environment is 'local')",
+          "scope": "application"
+        },
+        "rampify.clientId": {
+          "type": "string",
+          "default": "",
+          "description": "Client ID for this project",
+          "scope": "resource"
+        },
+        "rampify.domain": {
+          "type": "string",
+          "default": "",
+          "description": "Domain associated with this project",
+          "scope": "resource"
+        }
+      }
+    },
+    "commands": [
+      {
+        "command": "rampify.setupProject",
+        "title": "Rampify: Setup Project Link",
+        "icon": "$(link)"
+      },
+      {
+        "command": "rampify.setApiKey",
+        "title": "Rampify: Set API Key"
+      },
+      {
+        "command": "rampify.switchEnvironment",
+        "title": "Rampify: Switch Environment"
+      },
+      {
+        "command": "rampify.refreshFeatureSpecs",
+        "title": "Rampify: Refresh Feature Specs",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "rampify.openFeatureSpec",
+        "title": "Rampify: Open Feature Spec in Browser",
+        "icon": "$(link-external)"
+      },
+      {
+        "command": "rampify.openFeatureSpecsInBrowser",
+        "title": "Rampify: Open Feature Specs in Browser",
+        "icon": "$(globe)"
+      },
+      {
+        "command": "rampify.copyFeatureSpecReference",
+        "title": "Rampify: Copy Feature Spec Reference",
+        "icon": "$(copy)"
+      },
+      {
+        "command": "rampify.installMcpServer",
+        "title": "Rampify: Set Up MCP Server",
+        "icon": "$(terminal)"
+      },
+      {
+        "command": "rampify.toggleResolvedSpecs",
+        "title": "Rampify: Toggle Resolved Specs",
+        "icon": "$(eye)"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "rampify",
+          "title": "Rampify",
+          "icon": "resources/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "rampify": [
+        {
+          "id": "rampify.featureSpecs",
+          "name": "Specs",
+          "icon": "resources/icon.svg",
+          "contextualTitle": "Rampify"
+        }
+      ]
+    },
+    "menus": {
+      "view/title": [
+        {
+          "command": "rampify.toggleResolvedSpecs",
+          "when": "view == rampify.featureSpecs",
+          "group": "navigation"
+        },
+        {
+          "command": "rampify.refreshFeatureSpecs",
+          "when": "view == rampify.featureSpecs",
+          "group": "navigation"
+        },
+        {
+          "command": "rampify.openFeatureSpecsInBrowser",
+          "when": "view == rampify.featureSpecs",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "rampify.copyFeatureSpecReference",
+          "when": "view == rampify.featureSpecs && viewItem == featureSpec",
+          "group": "inline@1"
+        },
+        {
+          "command": "rampify.openFeatureSpec",
+          "when": "view == rampify.featureSpecs && viewItem == featureSpec",
+          "group": "inline@2"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run bundle",
+    "bundle": "esbuild src/extension.ts --bundle --outfile=out/extension.js --external:vscode --platform=node --target=node20 --minify",
+    "package": "npm run bundle && npx vsce package --no-dependencies",
+    "compile": "tsc -p ./ --noEmit",
+    "watch": "esbuild src/extension.ts --bundle --outfile=out/extension.js --external:vscode --platform=node --target=node20 --watch",
+    "pretest": "npm run bundle && npm run lint",
+    "lint": "eslint src --ext ts",
+    "test": "node ./out/test/runTest.js"
+  },
+  "devDependencies": {
+    "@types/glob": "^8.1.0",
+    "@types/mocha": "^10.0.6",
+    "@types/node": "20.x",
+    "@types/vscode": "^1.85.0",
+    "@typescript-eslint/eslint-plugin": "^6.15.0",
+    "@typescript-eslint/parser": "^6.15.0",
+    "@vscode/test-electron": "^2.3.8",
+    "esbuild": "^0.27.3",
+    "eslint": "^8.56.0",
+    "glob": "^10.3.10",
+    "mocha": "^10.2.0",
+    "typescript": "^5.3.3"
+  },
+  "dependencies": {
+    "axios": "^1.6.5"
+  }
+}
