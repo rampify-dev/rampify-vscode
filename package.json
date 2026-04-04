@@ -1,8 +1,8 @@
 {
   "name": "rampify",
   "displayName": "Rampify — Spec-Driven Development",
-  "description": "Spec-driven development for AI coding tools. Define specs, track issues, and verify fixes — so AI builds what you actually intended.",
-  "version": "0.3.1",
+  "description": "Spec-driven development for AI coding tools. Define specs, track SEO issues, and verify fixes — so AI builds what you actually intended.",
+  "version": "0.3.2",
   "publisher": "rampify",
   "engines": {
     "vscode": "^1.85.0"
@@ -14,15 +14,15 @@
   ],
   "keywords": [
     "spec-driven development",
+    "spec driven development",
+    "mcp server",
+    "ai seo",
+    "ai coding tools",
     "feature specs",
-    "ai coding",
-    "mcp",
     "cursor",
     "claude",
-    "seo",
-    "structured data",
-    "ai agents",
-    "ai workflow"
+    "seo tools",
+    "ai agents"
   ],
   "license": "MIT",
   "repository": {

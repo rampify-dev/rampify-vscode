@@ -1,8 +1,8 @@
 # Rampify: Spec-Driven Development
 
-**Define specs. AI builds to spec. Verify with a scan.**
+Spec-driven development platform with AI SEO intelligence. Define specs, AI builds to spec, verify with a scan.
 
-Rampify brings spec-driven development to AI coding workflows. Instead of describing features in chat and hoping for the best, you define structured specifications with acceptance criteria, affected files, and implementation tasks that any AI coding tool can query and execute against.
+Rampify brings spec-driven development to AI coding tools. Instead of describing features in chat and hoping for the best, you define structured specifications with acceptance criteria, affected files, and implementation tasks that any AI coding tool can query and execute against.
 
 Specs can come from you, or from Rampify. Run a scan, and Rampify analyzes your site for issues like missing canonical tags, broken schema markup, and meta description problems, then creates specs automatically with affected URLs and fix instructions. Your AI picks up the spec and implements the fix. You scan again to verify.
 
@@ -38,7 +38,7 @@ Copy a spec reference into Claude or Cursor with a single click. Your AI retriev
 
 ### MCP server setup
 
-Built-in wizard to install the Rampify MCP server in Claude Code, Cursor, or Windsurf. One command, automatic configuration. Your AI tools get direct access to specs, scans, and site intelligence.
+Set up the Rampify MCP server in one command. Built-in wizard supports Claude Code, Cursor, and Windsurf with automatic configuration. Once connected, your AI coding tools can query specs, run site scans, generate schema markup, and access SEO intelligence directly.
 
 ### Commit tracking
 
