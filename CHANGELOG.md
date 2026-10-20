@@ -2,6 +2,21 @@
 
 All notable changes to the Rampify VS Code extension will be documented in this file.
 
+## [0.9.0] - 2026-10-20
+
+### Changed
+- **Setup happens in the sidebar.** Name your project, choose website or app, and say whether your site is live, all inline. The steps follow your answers: a live site gets **Scan your site** and **Connect Google Search Console**, a site that isn't live yet gets Search Console as an optional step, and apps skip the site questions. The browser opens only for signing in and Google's Search Console sign-in
+- **"It's live" is checked.** If the site doesn't answer, the sidebar asks whether it's live yet and offers to save it as not live
+- **Your first spec** has a "What are you building next?" box that copies a ready-made prompt for your AI
+
+### Added
+- **Skip for now** on every setup step, remembered per folder, with **Undo**
+- **Show Specs** / **Show Setup Checklist** switch the sidebar between your specs and the checklist, even before your first spec
+
+### Fixed
+- The **Set up your project** step could never complete for a project without a site, even after skipping setup on the web
+- Signing in no longer gets stuck on "Finish signing in to Rampify in your browser…" when the browser hands back to a different VS Code window, and clicking Sign in again while it's waiting reopens the browser page instead of starting a second sign-in
+
 ## [0.8.1] - 2026-10-20
 
 ### Changed

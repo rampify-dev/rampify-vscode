@@ -2,7 +2,7 @@
   "name": "rampify",
   "displayName": "Rampify: Spec-Driven Development",
   "description": "Spec-driven development for AI coding tools. Define specs, track SEO issues, and verify fixes, so AI builds what you actually intended.",
-  "version": "0.8.1",
+  "version": "0.9.0",
   "publisher": "rampify",
   "engines": {
     "vscode": "^1.85.0"
@@ -132,6 +132,16 @@
         "icon": "$(refresh)"
       },
       {
+        "command": "rampify.showSpecs",
+        "title": "Rampify: Show Specs",
+        "icon": "$(list-tree)"
+      },
+      {
+        "command": "rampify.showSetup",
+        "title": "Rampify: Show Setup Checklist",
+        "icon": "$(checklist)"
+      },
+      {
         "command": "rampify.openFeatureSpec",
         "title": "Rampify: Open Feature Spec in Browser",
         "icon": "$(link-external)"
@@ -174,14 +184,14 @@
           "name": "Home",
           "icon": "resources/icon.svg",
           "contextualTitle": "Rampify",
-          "when": "!rampify.hasSpecs"
+          "when": "rampify.view != specs"
         },
         {
           "id": "rampify.featureSpecs",
           "name": "Specs",
           "icon": "resources/icon.svg",
           "contextualTitle": "Rampify",
-          "when": "rampify.hasSpecs"
+          "when": "rampify.view == specs"
         }
       ]
     },
@@ -216,6 +226,16 @@
           "command": "rampify.refreshFeatureSpecs",
           "when": "view == rampify.home",
           "group": "navigation"
+        },
+        {
+          "command": "rampify.showSpecs",
+          "when": "view == rampify.home",
+          "group": "navigation@0"
+        },
+        {
+          "command": "rampify.showSetup",
+          "when": "view == rampify.featureSpecs",
+          "group": "navigation@0"
         }
       ],
       "view/item/context": [

@@ -29,14 +29,14 @@ export async function activate(context: vscode.ExtensionContext) {
   // Credentials live in SecretStorage, per linked project (see auth/session.ts).
   session = await Session.create(context.secrets, getProjectConfig()?.clientId);
   context.subscriptions.push(session);
-  oauth = new RampifyOAuth(context.globalState);
+  oauth = new RampifyOAuth(context.globalState, context.globalStorageUri.fsPath);
   // <scheme>://rampify.rampify/auth-callback → sign-in; /open → the setup
   // wizard's "Back to <editor>" button: refresh the checklist and show it.
   context.subscriptions.push(vscode.window.registerUriHandler({
     handleUri(uri: vscode.Uri) {
       if (uri.path === '/open') {
         setupState?.refresh();
-        vscode.commands.executeCommand(setupState?.current.specCount ? 'rampify.featureSpecs.focus' : 'rampify.home.focus');
+        vscode.commands.executeCommand(setupState?.currentView === 'specs' ? 'rampify.featureSpecs.focus' : 'rampify.home.focus');
         return;
       }
       oauth.handleUri(uri);
@@ -49,7 +49,7 @@ export async function activate(context: vscode.ExtensionContext) {
   // Home panel: signed-out pitch + setup checklist, until the project has specs.
   setupState = new SetupState(() => apiClient, session, context.workspaceState);
   context.subscriptions.push(setupState);
-  const homeView = new HomeViewProvider(setupState, getWebUrl);
+  const homeView = new HomeViewProvider(setupState, getWebUrl, () => apiClient);
   context.subscriptions.push(homeView);
   context.subscriptions.push(vscode.window.registerWebviewViewProvider(HomeViewProvider.viewId, homeView));
 
@@ -133,6 +133,18 @@ export async function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.commands.registerCommand('rampify.signInWithCode', async () => {
       await signInWithRampify({ withCode: true });
+    })
+  );
+
+  // Switch the sidebar between the setup checklist and the specs list.
+  context.subscriptions.push(
+    vscode.commands.registerCommand('rampify.showSpecs', async () => {
+      await setupState.showView('specs');
+      await vscode.commands.executeCommand('rampify.featureSpecs.focus');
+    }),
+    vscode.commands.registerCommand('rampify.showSetup', async () => {
+      await setupState.showView('home');
+      await vscode.commands.executeCommand('rampify.home.focus');
     })
   );
 
@@ -380,6 +392,13 @@ async function signInWithRampify(opts: { withCode?: boolean } = {}): Promise<voi
     return;
   }
 
+  // A second click while the browser step is open reopens that page instead
+  // of starting another sign-in (which would leave one of them waiting).
+  if (!opts.withCode && oauth.inProgress) {
+    oauth.reopenBrowser();
+    return;
+  }
+
   let result;
   try {
     result = opts.withCode ? await oauth.signInWithCode(getWebUrl()) : await oauth.signIn(getWebUrl());
@@ -421,8 +440,10 @@ async function signInWithRampify(opts: { withCode?: boolean } = {}): Promise<voi
   await session.setProject(workspace.id);
   updateOnboardingContext();
   featureSpecsProvider.refresh();
+  // A newly linked project starts on its checklist (or its specs, if it has some).
+  await setupState.showView(null);
   await setupState.refresh();
-  vscode.commands.executeCommand('rampify.home.focus');
+  vscode.commands.executeCommand(setupState.currentView === 'specs' ? 'rampify.featureSpecs.focus' : 'rampify.home.focus');
   vscode.window.showInformationMessage(`Signed in to Rampify. This folder is linked to "${projectDisplayName(workspace)}".`);
 }
 

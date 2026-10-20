@@ -1,6 +1,8 @@
 import * as vscode from 'vscode';
 import * as crypto from 'crypto';
 import axios from 'axios';
+import * as fs from 'fs';
+import * as path from 'path';
 
 /**
  * "Sign in with Rampify": OAuth 2.1 authorization code + PKCE against
@@ -34,6 +36,9 @@ const CALLBACK_PATH = '/auth-callback';
 const SIGN_IN_TIMEOUT_MS = 10 * 60 * 1000;
 const DCR_CACHE_KEY = 'rampify.oauthClients';
 const DEVICE_CODE_GRANT = 'urn:ietf:params:oauth:grant-type:device_code';
+/** How often a waiting sign-in checks for a callback handed over by another window. */
+const HANDOFF_POLL_MS = 1000;
+const HANDOFF_MAX_AGE_MS = 15 * 60 * 1000;
 
 export interface PreparedSignIn {
   /** What openExternal is given. */
@@ -62,23 +67,87 @@ export class SignInCancelled extends Error {
 
 export class RampifyOAuth implements vscode.UriHandler {
   private pending: Pending | undefined;
+  /** The browser page of the sign-in in progress, to reopen instead of starting another. */
+  private openAuthorizeUri: vscode.Uri | undefined;
 
-  constructor(private readonly globalState: vscode.Memento) {}
+  /**
+   * `handoffDir` is the extension's global storage folder, shared by every
+   * window: the editor sends the browser's callback to the last-focused
+   * window, which may not be the one waiting (several windows open). That
+   * window drops the callback there and the waiting one picks it up.
+   */
+  constructor(private readonly globalState: vscode.Memento, private readonly handoffDir?: string) {}
+
+  /** A sign-in is waiting on the browser in this window. */
+  get inProgress(): boolean {
+    return !!this.pending;
+  }
+
+  /** Reopen the in-progress sign-in's browser page (a second click on Sign in). */
+  reopenBrowser(): void {
+    if (this.openAuthorizeUri) { vscode.env.openExternal(this.openAuthorizeUri); }
+  }
 
   /** Called by the editor for <scheme>://rampify.rampify/... URIs. */
   handleUri(uri: vscode.Uri): void {
-    if (uri.path !== CALLBACK_PATH || !this.pending) { return; }
+    if (uri.path !== CALLBACK_PATH) { return; }
     const params = new URLSearchParams(uri.query);
-    // A stale or forged callback (wrong state) is ignored, not an error.
-    if (params.get('state') !== this.pending.state) { return; }
-    const pending = this.pending;
-    this.pending = undefined;
+    const state = params.get('state');
+    if (!state) { return; }
+    if (this.pending?.state === state) {
+      this.settle(this.pending, params);
+      return;
+    }
+    // Not this window's sign-in (or a stale one): hand it to whichever
+    // window is waiting for this state. A forged callback goes nowhere.
+    this.writeHandoff(state, uri.query);
+  }
+
+  private settle(pending: Pending, params: URLSearchParams): void {
+    if (this.pending === pending) { this.pending = undefined; }
     const error = params.get('error');
     const code = params.get('code');
     if (error || !code) {
       pending.reject(new Error(params.get('error_description') || error || 'Rampify did not return a sign-in code.'));
     } else {
       pending.resolve(code);
+    }
+  }
+
+  private handoffFile(state: string): string | undefined {
+    if (!this.handoffDir) { return undefined; }
+    const id = crypto.createHash('sha256').update(state).digest('hex').slice(0, 32);
+    return path.join(this.handoffDir, `oauth-callback-${id}.txt`);
+  }
+
+  private writeHandoff(state: string, query: string): void {
+    const file = this.handoffFile(state);
+    if (!file) { return; }
+    try {
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, query, { mode: 0o600 });
+      // Drop callbacks nobody claimed.
+      for (const name of fs.readdirSync(path.dirname(file))) {
+        const f = path.join(path.dirname(file), name);
+        if (name.startsWith('oauth-callback-') && Date.now() - fs.statSync(f).mtimeMs > HANDOFF_MAX_AGE_MS) {
+          fs.rmSync(f, { force: true });
+        }
+      }
+    } catch {
+      // Best effort: the waiting window can still time out and retry.
+    }
+  }
+
+  /** A callback for `state` that another window received, if any (claimed once). */
+  private readHandoff(state: string): URLSearchParams | undefined {
+    const file = this.handoffFile(state);
+    if (!file || !fs.existsSync(file)) { return undefined; }
+    try {
+      const query = fs.readFileSync(file, 'utf8');
+      fs.rmSync(file, { force: true });
+      return new URLSearchParams(query);
+    } catch {
+      return undefined;
     }
   }
 
@@ -141,6 +210,7 @@ export class RampifyOAuth implements vscode.UriHandler {
       },
       (_progress, token) => {
         const waiting = this.waitForCode(state, token);
+        this.openAuthorizeUri = authorizeUri;
         vscode.env.openExternal(authorizeUri);
         return waiting;
       }
@@ -233,14 +303,24 @@ export class RampifyOAuth implements vscode.UriHandler {
     return new Promise<string>((resolve, reject) => {
       const timer = setTimeout(() => {
         if (this.pending?.state === state) { this.pending = undefined; }
-        reject(new Error('it timed out waiting for the browser.'));
+        done(reject)(new Error('it timed out waiting for the browser.'));
       }, SIGN_IN_TIMEOUT_MS);
-      const done = <T>(fn: (v: T) => void) => (v: T) => { clearTimeout(timer); sub.dispose(); fn(v); };
-      const sub = token.onCancellationRequested(() => {
-        if (this.pending?.state === state) { this.pending = undefined; }
-        done(reject)(new SignInCancelled());
-      });
-      this.pending = { state, resolve: done(resolve), reject: done(reject) };
+      // The callback may land in another window (see handoffDir).
+      const poll = setInterval(() => {
+        const params = this.readHandoff(state);
+        if (params && this.pending === pending) { this.settle(pending, params); }
+      }, HANDOFF_POLL_MS);
+      const done = <T>(fn: (v: T) => void) => (v: T) => {
+        clearTimeout(timer);
+        clearInterval(poll);
+        sub.dispose();
+        if (this.pending === pending) { this.pending = undefined; }
+        this.openAuthorizeUri = undefined;
+        fn(v);
+      };
+      const sub = token.onCancellationRequested(() => done(reject)(new SignInCancelled()));
+      const pending: Pending = { state, resolve: done(resolve), reject: done(reject) };
+      this.pending = pending;
     });
   }
 

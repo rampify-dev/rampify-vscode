@@ -26,7 +26,7 @@ The next scan confirms the fix
 
 ### Home panel
 
-Before you're set up, the Rampify sidebar explains what Rampify does and signs you in. Once you're signed in it becomes a short checklist for your project (add your site, connect your AI tool, create your first spec), with the next step's button right there. When your first spec arrives, the sidebar switches to your specs.
+Before you're set up, the Rampify sidebar explains what Rampify does and signs you in. Once you're signed in it becomes a short checklist you finish right in the sidebar: name your project, say whether it's a website or an app and whether the site is live, then scan it, connect Google Search Console, connect your AI tool, and write your first spec. The steps adapt to your answers (no scan for a site that isn't live yet, no site questions for an app), and every step can be skipped for now. When your first spec arrives, the sidebar switches to your specs; **Show specs** and **Show Setup Checklist** switch between the two any time.
 
 ### Specs sidebar
 
@@ -52,7 +52,15 @@ Open the Rampify sidebar and click **Sign in with Rampify**. Your browser opens 
 
 ### 2. Follow the checklist
 
-The sidebar lists what's left: set up your project (opens Rampify's setup in your browser, with a **Back to VS Code** button when you're done), connect your AI coding tool over MCP, and ask your AI for your first spec. Each step has its button.
+Everything happens in the sidebar:
+
+- **Your project**: its name, website or app, and whether your site is live (with its address). If you say it's live, Rampify checks that the site answers before saving.
+- **Scan your site** (live sites): Rampify crawls it and turns what it finds into specs.
+- **Connect Google Search Console** (recommended once live, optional before launch): Google's sign-in opens in your browser, with a **Back to VS Code** button when you're done.
+- **Connect your AI tool** over MCP. This step completes once your AI tool actually connects.
+- **Your first spec**: type what you're building next and copy a ready-made prompt for your AI.
+
+Any step can be skipped for now. The rest of Rampify's setup (business profile, launch stage) is optional and lives in the dashboard.
 
 ### 3. Work from your specs
 
@@ -73,6 +81,7 @@ Prefer an API key? Choose **Use an API key** and paste a key from [Settings → 
 | **Setup Project Link** | Link this folder to a project (with an API key), or sign in |
 | **Set Up MCP Server** | Connect GitHub Copilot, Cursor, Claude Code, or another MCP client |
 | **Refresh Feature Specs** | Re-fetch specs from Rampify |
+| **Show Specs** / **Show Setup Checklist** | Switch the sidebar between your specs and the setup checklist |
 | **Show/Hide Resolved and Idea Specs** | Toggle the Completed, Verified, Deprecated, and Idea groups |
 | **Copy Feature Spec Reference** | Copy a spec reference for your AI chat |
 | **Open Feature Spec in Browser** | Open the spec in the Rampify dashboard |

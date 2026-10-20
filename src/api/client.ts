@@ -1,4 +1,5 @@
 import axios, { AxiosInstance, AxiosError } from 'axios';
+import type { ProjectType, StartingPoint } from '../views/setup-steps';
 import * as vscode from 'vscode';
 import {
   Client,
@@ -162,6 +163,46 @@ export class RampifyApiClient {
     }
   }
 
+  /**
+   * The project's setup state: intake answers, crawl and Search Console
+   * status, and the web wizard's progress (GET /sites/:id/setup-advance, the
+   * same read the dashboard's wizard uses).
+   */
+  async getSetup(siteId: string): Promise<ProjectSetup | null> {
+    try {
+      const response = await this.axios.get<ProjectSetup>(`/sites/${siteId}/setup-advance`, { rampifySilent: true });
+      return response.data;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Save the sidebar's project answers (PATCH /sites/:id). Failures come back
+   * as values: `unreachable` when a site saved as live didn't answer.
+   */
+  async updateProject(siteId: string, body: ProjectUpdate): Promise<ProjectUpdateResult> {
+    try {
+      await this.axios.patch(`/sites/${siteId}`, body, { rampifySilent: true });
+      return { ok: true };
+    } catch (error) {
+      const data = (axios.isAxiosError(error) ? error.response?.data : undefined) as ApiError & { code?: string } | undefined;
+      const message = data?.error || (error instanceof Error ? error.message : 'Could not save the project.');
+      return { ok: false, unreachable: data?.code === 'site_unreachable', message };
+    }
+  }
+
+  /** Start a full scan of the project's site (crawl + findings → specs). */
+  async startScan(siteId: string): Promise<{ ok: true } | { ok: false; message: string }> {
+    try {
+      await this.axios.post(`/sites/${siteId}/analyze/trigger`, { include_url_health: true }, { rampifySilent: true });
+      return { ok: true };
+    } catch (error) {
+      const data = (axios.isAxiosError(error) ? error.response?.data : undefined) as ApiError | undefined;
+      return { ok: false, message: data?.error || 'Could not start the scan.' };
+    }
+  }
+
   async getSite(clientId: string, opts: { silent?: boolean } = {}): Promise<Site | null> {
     try {
       const response = await this.axios.get<Site>(`/clients/${clientId}/site`, { rampifySilent: opts.silent });
@@ -224,3 +265,30 @@ export class RampifyApiClient {
     }
   }
 }
+
+/** GET /sites/:id/setup-advance (the fields the sidebar reads). */
+export interface ProjectSetup {
+  wizard: { state: 'pending' | 'in_progress' | 'completed' | 'dismissed'; step: string | null } | null;
+  bootstrap_phase: string | null;
+  has_crawled_urls: boolean;
+  gsc: { connected: boolean; has_property: boolean };
+  project: {
+    domain: string | null;
+    project_type: ProjectType | null;
+    starting_point: StartingPoint | null;
+    name: string | null;
+    brand_name: string | null;
+  };
+}
+
+export interface ProjectUpdate {
+  name?: string;
+  domain?: string;
+  project_type?: ProjectType;
+  starting_point?: StartingPoint;
+  verify_live?: boolean;
+  advance_wizard?: boolean;
+  editor?: string;
+}
+
+export type ProjectUpdateResult = { ok: true } | { ok: false; unreachable: boolean; message: string };
