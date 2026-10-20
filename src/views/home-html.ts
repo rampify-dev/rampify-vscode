@@ -93,9 +93,11 @@ ${footer()}`;
       button('openSetup', 'Set Up Project')
     ),
     step(
-      s.mcpConfigured,
+      s.aiToolConnected ?? s.mcpConfigured,
       'Connect your AI tool',
-      'Give Claude Code, Cursor, or Copilot access to Rampify over MCP.',
+      s.mcpConfigured && s.aiToolConnected === false
+        ? 'Rampify is in your MCP config. Open your AI tool and approve Rampify\u2019s sign-in; this step completes once it connects.'
+        : 'Give Claude Code, Cursor, or Copilot access to Rampify over MCP.',
       button('setupMcp', 'Set Up MCP')
     ),
     step(

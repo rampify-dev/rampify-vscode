@@ -2,6 +2,11 @@
 
 All notable changes to the Rampify VS Code extension will be documented in this file.
 
+## [0.8.1] - 2026-10-20
+
+### Changed
+- **Connect your AI tool** is checked off when your AI tool actually connects to Rampify, as reported by Rampify, not just when Rampify is in an MCP config file. If Rampify is configured but your AI tool hasn't signed in yet, the step says so
+
 ## [0.8.0] - 2026-10-20
 
 ### Fixed

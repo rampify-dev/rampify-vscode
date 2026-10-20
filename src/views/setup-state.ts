@@ -21,7 +21,13 @@ export interface SetupSnapshot {
   projectName: string | null;
   /** The setup wizard hasn't been finished or skipped, and there's no site yet. */
   needsProjectSetup: boolean;
+  /** Rampify's MCP server is in this folder's (or Cursor's) MCP config. */
   mcpConfigured: boolean;
+  /**
+   * An AI tool has actually connected to Rampify over MCP (server-reported).
+   * Null when the server doesn't say; the checklist falls back to mcpConfigured.
+   */
+  aiToolConnected: boolean | null;
   specCount: number;
   /** Couldn't reach Rampify or the project. */
   error: string | null;
@@ -77,6 +83,7 @@ export class SetupState implements vscode.Disposable {
         const wizardDone = site?.setup_wizard_state === 'completed' || site?.setup_wizard_state === 'dismissed';
         next.needsProjectSetup = !(wizardDone || site?.domain || (client && primaryProject(client)?.domain));
         next.specCount = site ? await api.countFeatureSpecs(site.id) : 0;
+        next.aiToolConnected = await api.getAiToolConnected();
         if (!client) {
           next.error = "This folder's project isn't available with your current sign-in.";
         }
@@ -98,7 +105,7 @@ export class SetupState implements vscode.Disposable {
 function emptySnapshot(): SetupSnapshot {
   return {
     hasFolder: false, signedIn: false, viaSignIn: false, clientId: null, projectName: null,
-    needsProjectSetup: false, mcpConfigured: false, specCount: 0, error: null,
+    needsProjectSetup: false, mcpConfigured: false, aiToolConnected: null, specCount: 0, error: null,
   };
 }
 

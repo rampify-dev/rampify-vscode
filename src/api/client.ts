@@ -148,6 +148,20 @@ export class RampifyApiClient {
     }
   }
 
+  /**
+   * Whether an AI tool has connected to Rampify's MCP server with this
+   * account (the server's one definition, not local config files). Null when
+   * the server doesn't report it (older deployments) or can't be reached.
+   */
+  async getAiToolConnected(): Promise<boolean | null> {
+    try {
+      const response = await this.axios.get<{ ai_tool_connected?: boolean }>('/me/projects', { rampifySilent: true });
+      return typeof response.data.ai_tool_connected === 'boolean' ? response.data.ai_tool_connected : null;
+    } catch {
+      return null;
+    }
+  }
+
   async getSite(clientId: string, opts: { silent?: boolean } = {}): Promise<Site | null> {
     try {
       const response = await this.axios.get<Site>(`/clients/${clientId}/site`, { rampifySilent: opts.silent });
