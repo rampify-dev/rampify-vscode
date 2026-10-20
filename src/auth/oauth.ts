@@ -15,8 +15,11 @@ import axios from 'axios';
  * Client identity: Rampify's first-party client (a metadata document listing
  * the extension callback for each VS Code-based editor), shown on the consent
  * screen as "Rampify for VS Code". An editor whose scheme isn't on that list
- * falls back to Dynamic Client Registration (shown as unverified). Browser-based
- * editors aren't supported (their callback is an https URL); they use an API key.
+ * falls back to Dynamic Client Registration (shown as unverified).
+ *
+ * Where the browser can't hand control back (a window whose callback VS Code
+ * rewrites to https, or by choice via "Sign in with a code"), signInWithCode
+ * uses the device authorization grant instead: no return address at all.
  */
 
 /** Must match lib/auth/first-party-oauth-clients.ts in the Rampify app. */
@@ -30,6 +33,7 @@ const CALLBACK_AUTHORITY = 'rampify.rampify';
 const CALLBACK_PATH = '/auth-callback';
 const SIGN_IN_TIMEOUT_MS = 10 * 60 * 1000;
 const DCR_CACHE_KEY = 'rampify.oauthClients';
+const DEVICE_CODE_GRANT = 'urn:ietf:params:oauth:grant-type:device_code';
 
 export interface PreparedSignIn {
   /** What openExternal is given. */
@@ -82,13 +86,14 @@ export class RampifyOAuth implements vscode.UriHandler {
    * Build the authorize request. Separate from signIn so a real editor can be
    * checked end to end without opening a browser.
    */
-  async prepare(webUrl: string): Promise<PreparedSignIn> {
+  async prepare(webUrl: string): Promise<PreparedSignIn | null> {
     const callback = vscode.Uri.parse(`${vscode.env.uriScheme}://${CALLBACK_AUTHORITY}${CALLBACK_PATH}`);
-    // Browser-based editors (vscode.dev, Codespaces in the browser) rewrite the
-    // callback to an https URL we can't register ahead of time.
+    // Browser-based windows (Codespaces in the browser, some remote setups)
+    // rewrite the callback to an https URL we can't register ahead of time:
+    // no redirect sign-in there (null → the caller uses the code flow).
     const external = await vscode.env.asExternalUri(callback);
     if (external.scheme !== vscode.env.uriScheme) {
-      throw new Error('Signing in from a browser-based editor isn\u2019t supported yet. Use \u201cUse an API key instead\u201d.');
+      return null;
     }
     // Desktop VS Code adds ?windowId=N to the external form. Don't use it: a '?'
     // inside redirect_uri doesn't survive openExternal (VS Code hands the
@@ -124,7 +129,9 @@ export class RampifyOAuth implements vscode.UriHandler {
    * cancels the progress notification.
    */
   async signIn(webUrl: string): Promise<SignInResult> {
-    const { authorizeUri, redirectUri, clientId, verifier, state } = await this.prepare(webUrl);
+    const prepared = await this.prepare(webUrl);
+    if (!prepared) { return this.signInWithCode(webUrl); }
+    const { authorizeUri, redirectUri, clientId, verifier, state } = prepared;
 
     const code = await vscode.window.withProgress(
       {
@@ -156,13 +163,77 @@ export class RampifyOAuth implements vscode.UriHandler {
     return { accessToken: response.data.access_token, projectId: response.data.project_id ?? null };
   }
 
+  /**
+   * Device-code sign-in (RFC 8628): no return address needed, so it works in
+   * any window. Shows a short code, opens rampify.dev/activate with it, and
+   * polls the token endpoint until the user approves, denies, or it expires.
+   */
+  async signInWithCode(webUrl: string): Promise<SignInResult> {
+    const start = await axios.post(
+      new URL('/api/oauth/device_authorization', webUrl).toString(),
+      { client_id: FIRST_PARTY_CLIENT_ID },
+      { timeout: 30000, validateStatus: () => true }
+    );
+    if (start.status !== 200 || !start.data?.device_code) {
+      throw new Error(start.data?.error_description || `Couldn't start sign-in (${start.status}).`);
+    }
+    const { device_code, user_code, verification_uri, verification_uri_complete } = start.data as {
+      device_code: string; user_code: string; verification_uri: string; verification_uri_complete: string;
+    };
+    let intervalMs = (Number(start.data.interval) || 5) * 1000;
+    const deadline = Date.now() + (Number(start.data.expires_in) || 600) * 1000;
+    const pageHost = new URL(verification_uri).host + new URL(verification_uri).pathname;
+
+    const openPage = () => vscode.env.openExternal(vscode.Uri.parse(verification_uri_complete));
+    // Non-blocking: lets the user copy the code or reopen the page.
+    vscode.window.showInformationMessage(
+      `Your Rampify sign-in code is ${user_code}. Confirm it at ${pageHost}.`,
+      'Copy Code',
+      'Open Page'
+    ).then((action) => {
+      if (action === 'Copy Code') { vscode.env.clipboard.writeText(user_code); }
+      if (action === 'Open Page') { openPage(); }
+    });
+
+    return vscode.window.withProgress(
+      {
+        location: vscode.ProgressLocation.Notification,
+        title: `Confirm code ${user_code} in your browser to sign in to Rampify…`,
+        cancellable: true,
+      },
+      async (_progress, token) => {
+        openPage();
+        while (Date.now() < deadline) {
+          await sleep(intervalMs, token);
+          if (token.isCancellationRequested) { throw new SignInCancelled(); }
+          const res = await axios.post(
+            new URL('/api/oauth/token', webUrl).toString(),
+            { grant_type: DEVICE_CODE_GRANT, device_code, client_id: FIRST_PARTY_CLIENT_ID },
+            { timeout: 30000, validateStatus: () => true }
+          ).catch(() => null);
+          if (!res) { continue; } // network blip: keep polling
+          if (res.status === 200 && res.data?.access_token) {
+            return { accessToken: res.data.access_token, projectId: res.data.project_id ?? null };
+          }
+          const error = res.data?.error;
+          if (error === 'authorization_pending') { continue; }
+          if (error === 'slow_down') { intervalMs += 5000; continue; }
+          if (error === 'access_denied') { throw new Error('Sign-in was cancelled in the browser.'); }
+          if (error === 'expired_token') { break; }
+          throw new Error(res.data?.error_description || error || `Sign-in failed (${res.status}).`);
+        }
+        throw new Error('The sign-in code expired. Start signing in again.');
+      }
+    );
+  }
+
   private waitForCode(state: string, token: vscode.CancellationToken): Promise<string> {
     // One sign-in at a time: a new attempt supersedes an abandoned one.
     this.pending?.reject(new SignInCancelled());
     return new Promise<string>((resolve, reject) => {
       const timer = setTimeout(() => {
         if (this.pending?.state === state) { this.pending = undefined; }
-        reject(new Error('Sign-in timed out. Start it again from the Rampify sidebar.'));
+        reject(new Error('it timed out waiting for the browser.'));
       }, SIGN_IN_TIMEOUT_MS);
       const done = <T>(fn: (v: T) => void) => (v: T) => { clearTimeout(timer); sub.dispose(); fn(v); };
       const sub = token.onCancellationRequested(() => {
@@ -196,6 +267,14 @@ export class RampifyOAuth implements vscode.UriHandler {
     await this.globalState.update(DCR_CACHE_KEY, { ...cache, [cacheKey]: res.data.client_id });
     return res.data.client_id;
   }
+}
+
+/** Wait `ms`, resolving early if the user cancels. */
+function sleep(ms: number, token: vscode.CancellationToken): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => { sub.dispose(); resolve(); }, ms);
+    const sub = token.onCancellationRequested(() => { clearTimeout(timer); sub.dispose(); resolve(); });
+  });
 }
 
 function base64url(buf: Buffer): string {

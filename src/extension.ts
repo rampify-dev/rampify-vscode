@@ -30,7 +30,18 @@ export async function activate(context: vscode.ExtensionContext) {
   session = await Session.create(context.secrets, getProjectConfig()?.clientId);
   context.subscriptions.push(session);
   oauth = new RampifyOAuth(context.globalState);
-  context.subscriptions.push(vscode.window.registerUriHandler(oauth));
+  // <scheme>://rampify.rampify/auth-callback → sign-in; /open → the setup
+  // wizard's "Back to <editor>" button: refresh the checklist and show it.
+  context.subscriptions.push(vscode.window.registerUriHandler({
+    handleUri(uri: vscode.Uri) {
+      if (uri.path === '/open') {
+        setupState?.refresh();
+        vscode.commands.executeCommand(setupState?.current.specCount ? 'rampify.featureSpecs.focus' : 'rampify.home.focus');
+        return;
+      }
+      oauth.handleUri(uri);
+    },
+  }));
 
   // Initialize API client
   apiClient = createApiClient();
@@ -115,6 +126,13 @@ export async function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.commands.registerCommand('rampify.signIn', async () => {
       await signInWithRampify();
+    })
+  );
+
+  // For when the browser can't hand control back to this window.
+  context.subscriptions.push(
+    vscode.commands.registerCommand('rampify.signInWithCode', async () => {
+      await signInWithRampify({ withCode: true });
     })
   );
 
@@ -352,7 +370,7 @@ function getEditorSlug(): string {
  * token stored in SecretStorage. Also handles new users: the browser offers
  * sign-up and comes back here.
  */
-async function signInWithRampify(): Promise<void> {
+async function signInWithRampify(opts: { withCode?: boolean } = {}): Promise<void> {
   if ((vscode.workspace.workspaceFolders?.length ?? 0) === 0) {
     const action = await vscode.window.showWarningMessage(
       'Open your project folder first, then sign in to link it to Rampify.',
@@ -364,10 +382,19 @@ async function signInWithRampify(): Promise<void> {
 
   let result;
   try {
-    result = await oauth.signIn(getWebUrl());
+    result = opts.withCode ? await oauth.signInWithCode(getWebUrl()) : await oauth.signIn(getWebUrl());
   } catch (err) {
     if (err instanceof SignInCancelled) { return; }
-    vscode.window.showErrorMessage(`Rampify sign-in failed: ${err instanceof Error ? err.message : String(err)}`);
+    // Usually the browser step was abandoned or timed out; offer the retry
+    // (quick if they're now signed in on the web) and the code flow.
+    vscode.window.showErrorMessage(
+      `Rampify sign-in didn't finish: ${err instanceof Error ? err.message : String(err)}`,
+      'Try Again',
+      'Sign In with a Code'
+    ).then((action) => {
+      if (action === 'Try Again') { signInWithRampify(opts); }
+      if (action === 'Sign In with a Code') { signInWithRampify({ withCode: true }); }
+    });
     return;
   }
 

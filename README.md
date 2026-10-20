@@ -48,23 +48,26 @@ Copy a spec reference into your AI chat with one click. Your AI fetches the full
 
 ### 1. Sign in
 
-Open the Rampify sidebar and click **Sign in with Rampify**. Your browser opens Rampify, where you sign in (or create a free account with GitHub, Google, or an email code), then pick the project this folder belongs to, or name a new one. You're sent back to the editor with the folder linked. No API key to copy.
+Open the Rampify sidebar and click **Sign in with Rampify**. Your browser opens Rampify: continue with GitHub, Google, or an email code (this signs you in, or creates your free account if you're new), then pick the project this folder belongs to, or name a new one. You're sent back to the editor with the folder linked. No API key to copy.
 
 ### 2. Follow the checklist
 
-The sidebar lists what's left: add your site to the project (opens Rampify's setup), connect your AI coding tool over MCP, and ask your AI for your first spec. Each step has its button.
+The sidebar lists what's left: set up your project (opens Rampify's setup in your browser, with a **Back to VS Code** button when you're done), connect your AI coding tool over MCP, and ask your AI for your first spec. Each step has its button.
 
 ### 3. Work from your specs
 
 Once specs exist, the sidebar shows them grouped by status. Copy a spec reference into your AI chat, or open it in the dashboard.
 
-Prefer an API key (for example on a machine without a browser)? Choose **Use an API key instead** and paste a key from [Settings → API keys](https://www.rampify.dev/settings/api-keys).
+**Working in Codespaces or another remote window?** Signing in works there too. When the browser can't hand control back to the editor, the extension shows a short code instead: confirm it at rampify.dev/activate, pick your project, and the editor finishes on its own. You can also choose **Sign in with a code** yourself if the browser doesn't return you to the right window.
+
+Prefer an API key? Choose **Use an API key** and paste a key from [Settings → API keys](https://www.rampify.dev/settings/api-keys).
 
 ## Commands
 
 | Command | Description |
 |---------|-------------|
 | **Sign In** | Sign in with Rampify in the browser and link this folder to a project |
+| **Sign In with a Code** | Sign in by confirming a short code at rampify.dev/activate (for remote or browser windows) |
 | **Switch Project** | Sign in again to link this folder to a different project |
 | **Set API Key (instead of signing in)** | Use a pasted API key instead of signing in |
 | **Setup Project Link** | Link this folder to a project (with an API key), or sign in |

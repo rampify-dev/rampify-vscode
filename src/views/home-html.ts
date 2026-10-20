@@ -55,7 +55,7 @@ function signedOut(): string {
 </ul>
 <button class="btn" data-action="signIn">Sign in with Rampify</button>
 <p class="hint">New to Rampify? This creates a free account.</p>
-<p class="center"><button class="link" data-action="useApiKey">Use an API key instead</button></p>`;
+<p class="center small"><button class="link" data-action="signInWithCode">Sign in with a code</button> · <button class="link" data-action="useApiKey">Use an API key</button></p>`;
 }
 
 function noFolder(): string {
@@ -88,9 +88,9 @@ ${footer()}`;
     step(true, 'Connected', `This folder is linked to <b>${name}</b>.`, ''),
     step(
       !s.needsProjectSetup,
-      'Add your site',
-      'Tell Rampify your site and project type so it can scan and research it.',
-      button('openSetup', 'Finish Setup')
+      'Set up your project',
+      'Add your site and a few project details so Rampify can scan and research it. Opens in your browser; there\u2019s a button to come back here.',
+      button('openSetup', 'Set Up Project')
     ),
     step(
       s.mcpConfigured,
@@ -192,6 +192,7 @@ h2 { font-size: 15px; font-weight: 600; margin: 16px 0 4px; }
 .btn.small { display: inline-block; width: auto; margin-top: 8px; padding: 4px 12px; font-weight: 500; }
 .hint { margin: 8px 0 0; font-size: 12px; text-align: center; color: var(--vscode-descriptionForeground); }
 .center { text-align: center; margin: 10px 0 0; }
+.small { font-size: 12px; color: var(--vscode-descriptionForeground); }
 .link { padding: 0; border: 0; background: none; font: inherit; color: var(--vscode-textLink-foreground); cursor: pointer; }
 .link:hover { text-decoration: underline; color: var(--vscode-textLink-activeForeground); }
 .steps { list-style: none; padding: 0; margin: 0 0 18px; display: grid; gap: 4px; }

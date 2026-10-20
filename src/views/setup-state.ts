@@ -19,7 +19,7 @@ export interface SetupSnapshot {
   viaSignIn: boolean;
   clientId: string | null;
   projectName: string | null;
-  /** The project has no site yet: the dashboard's setup wizard hasn't run. */
+  /** The setup wizard hasn't been finished or skipped, and there's no site yet. */
   needsProjectSetup: boolean;
   mcpConfigured: boolean;
   specCount: number;
@@ -74,7 +74,8 @@ export class SetupState implements vscode.Disposable {
         const client = clients.find((c) => c.id === next.clientId);
         next.projectName = client ? projectDisplayName(client) : null;
         const site = await api.getSite(next.clientId, { silent: true });
-        next.needsProjectSetup = !(site?.domain || (client && primaryProject(client)?.domain));
+        const wizardDone = site?.setup_wizard_state === 'completed' || site?.setup_wizard_state === 'dismissed';
+        next.needsProjectSetup = !(wizardDone || site?.domain || (client && primaryProject(client)?.domain));
         next.specCount = site ? await api.countFeatureSpecs(site.id) : 0;
         if (!client) {
           next.error = "This folder's project isn't available with your current sign-in.";

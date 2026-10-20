@@ -65,6 +65,9 @@ export class HomeViewProvider implements vscode.WebviewViewProvider, vscode.Disp
       case 'switchProject':
         await vscode.commands.executeCommand(action === 'signIn' ? 'rampify.signIn' : 'rampify.switchProject');
         break;
+      case 'signInWithCode':
+        await vscode.commands.executeCommand('rampify.signInWithCode');
+        break;
       case 'useApiKey':
         await vscode.commands.executeCommand('rampify.setApiKey');
         break;
@@ -78,7 +81,13 @@ export class HomeViewProvider implements vscode.WebviewViewProvider, vscode.Disp
         await vscode.commands.executeCommand('rampify.installMcpServer');
         break;
       case 'openSetup':
-        if (clientId) { vscode.env.openExternal(vscode.Uri.parse(`${web}/clients/${clientId}/setup`)); }
+        // ?from= lets the wizard offer "Back to <editor>" (a link to
+        // <scheme>://rampify.rampify/open) and skip asking which AI tool.
+        if (clientId) {
+          vscode.env.openExternal(
+            vscode.Uri.parse(`${web}/clients/${clientId}/setup?from=${encodeURIComponent(vscode.env.uriScheme)}`)
+          );
+        }
         break;
       case 'openDashboard':
         vscode.env.openExternal(vscode.Uri.parse(clientId ? `${web}/clients/${clientId}/home` : `${web}/dashboard`));

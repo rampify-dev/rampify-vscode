@@ -33,6 +33,8 @@ export interface Site {
   logo_bg_color: string | null;
   last_crawled_at: string | null;
   crawl_frequency_hours: number;
+  /** The dashboard setup wizard's progress (finished or skipped = set up). */
+  setup_wizard_state?: 'pending' | 'in_progress' | 'completed' | 'dismissed' | null;
   created_at: string;
   updated_at: string;
 }

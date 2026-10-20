@@ -2,6 +2,19 @@
 
 All notable changes to the Rampify VS Code extension will be documented in this file.
 
+## [0.8.0] - 2026-10-20
+
+### Fixed
+- **Signing up from the extension now comes back to the editor.** New users used to land on a sign-in page, and switching to sign-up lost the way back, so VS Code waited and timed out. Sign in with Rampify now opens one page where GitHub, Google or an email code signs you in or creates your free account, then returns you to the editor to finish connecting
+- If sign-in doesn't finish, the message offers **Try Again** and **Sign In with a Code**
+
+### Changed
+- New accounts can name their starter project on the connect screen
+- The checklist's **Set up your project** step opens Rampify's setup in the browser with a **Back to VS Code** button, and is checked off once setup is finished or skipped
+
+### Added
+- **Sign in with a code**: in Codespaces in the browser and other windows where the browser can't hand control back to the editor, signing in now shows a short code to confirm at rampify.dev/activate instead of asking for an API key. The editor finishes on its own once you pick a project. Also available as **Rampify: Sign In with a Code** and from the Home panel
+
 ## [0.7.1] - 2026-10-20
 
 ### Fixed
