@@ -161,7 +161,8 @@ export class FeatureSpecsTreeProvider implements vscode.TreeDataProvider<TreeIte
   private showResolved = false;
 
   constructor(
-    private apiClient: RampifyApiClient,
+    /** A getter, not a client: the client is rebuilt when the key changes. */
+    private getApiClient: () => RampifyApiClient,
     private getWebUrl: () => string,
     private context?: vscode.ExtensionContext
   ) {
@@ -242,7 +243,7 @@ export class FeatureSpecsTreeProvider implements vscode.TreeDataProvider<TreeIte
   }
 
   private async loadData(clientId: string): Promise<void> {
-    const site = await this.apiClient.getSite(clientId);
+    const site = await this.getApiClient().getSite(clientId);
     if (!site) {
       this.specs = [];
       this.loaded = true;
@@ -250,7 +251,7 @@ export class FeatureSpecsTreeProvider implements vscode.TreeDataProvider<TreeIte
       return;
     }
 
-    this.specs = await this.apiClient.getFeatureSpecs(site.id);
+    this.specs = await this.getApiClient().getFeatureSpecs(site.id);
     this.loaded = true;
     this.lastLoadedAt = Date.now();
   }

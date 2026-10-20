@@ -1,10 +1,12 @@
 # Rampify: Spec-Driven Development
 
+**Turn your coding agent into a marketing agent.**
+
 Rampify brings spec-driven development to AI coding tools. Instead of describing a feature in chat and hoping the result matches, you write a spec with acceptance criteria, tasks, and the files it touches, and any AI coding tool connected to Rampify can read it and build against it.
 
 Specs can come from you or from Rampify. Rampify scans your site for problems like missing canonical tags, broken schema markup, and weak meta descriptions, then files a spec for each one with the affected URLs and fix instructions. Discovery runs research sessions on how AI models see your category and turns what it finds into keyword clusters and content work. Your AI picks up the spec, makes the change, and the next scan confirms the fix.
 
-This extension puts those specs in your editor's sidebar and connects your AI coding tool to Rampify's MCP server in a couple of clicks.
+This extension signs you in to Rampify from the editor, walks you through setup, puts your specs in the sidebar, and connects your AI coding tool to Rampify's MCP server in a couple of clicks.
 
 **Works in VS Code, Cursor, and other editors built on VS Code** (Windsurf, Antigravity and others install it from Open VSX). Rampify's MCP server works with Claude Code, Cursor, GitHub Copilot, and any MCP client that supports remote servers.
 
@@ -21,6 +23,10 @@ The next scan confirms the fix
 ```
 
 ## Features
+
+### Home panel
+
+Before you're set up, the Rampify sidebar explains what Rampify does and signs you in. Once you're signed in it becomes a short checklist for your project (add your site, connect your AI tool, create your first spec), with the next step's button right there. When your first spec arrives, the sidebar switches to your specs.
 
 ### Specs sidebar
 
@@ -40,49 +46,46 @@ Copy a spec reference into your AI chat with one click. Your AI fetches the full
 
 ## Getting started
 
-### 1. Create a free account
+### 1. Sign in
 
-Click **Create Free Account** in the Rampify sidebar, or sign up at [rampify.dev/free](https://www.rampify.dev/free). The free plan includes one project.
+Open the Rampify sidebar and click **Sign in with Rampify**. Your browser opens Rampify, where you sign in (or create a free account with GitHub, Google, or an email code), then pick the project this folder belongs to, or name a new one. You're sent back to the editor with the folder linked. No API key to copy.
 
-### 2. Connect the extension
+### 2. Follow the checklist
 
-1. Create an API key in [Settings → API keys](https://www.rampify.dev/settings/api-keys)
-2. Click **Connect Account** in the Rampify sidebar (or run **Rampify: Set API Key**) and paste it
+The sidebar lists what's left: add your site to the project (opens Rampify's setup), connect your AI coding tool over MCP, and ask your AI for your first spec. Each step has its button.
 
-The extension checks the key with Rampify before saving it.
+### 3. Work from your specs
 
-### 3. Link your project
+Once specs exist, the sidebar shows them grouped by status. Copy a spec reference into your AI chat, or open it in the dashboard.
 
-Run **Rampify: Setup Project Link** and pick one of your projects. To start a new one, choose **Create New Project**: name it, and the extension opens Rampify's setup in your browser to finish. If your plan's project limit is reached, the extension tells you and offers the upgrade.
-
-### 4. Connect your AI coding tool
-
-Run **Rampify: Set Up MCP Server** and choose your tool. Once it's connected, your AI can read and update specs, run scans, and generate fixes.
+Prefer an API key (for example on a machine without a browser)? Choose **Use an API key instead** and paste a key from [Settings → API keys](https://www.rampify.dev/settings/api-keys).
 
 ## Commands
 
 | Command | Description |
 |---------|-------------|
-| **Create Free Account** | Open Rampify's signup page |
-| **Set API Key** | Connect the extension to your Rampify account |
-| **Setup Project Link** | Link this folder to a Rampify project, or create one |
+| **Sign In** | Sign in with Rampify in the browser and link this folder to a project |
+| **Switch Project** | Sign in again to link this folder to a different project |
+| **Set API Key (instead of signing in)** | Use a pasted API key instead of signing in |
+| **Setup Project Link** | Link this folder to a project (with an API key), or sign in |
 | **Set Up MCP Server** | Connect GitHub Copilot, Cursor, Claude Code, or another MCP client |
 | **Refresh Feature Specs** | Re-fetch specs from Rampify |
 | **Show/Hide Resolved and Idea Specs** | Toggle the Completed, Verified, Deprecated, and Idea groups |
 | **Copy Feature Spec Reference** | Copy a spec reference for your AI chat |
 | **Open Feature Spec in Browser** | Open the spec in the Rampify dashboard |
-| **Disconnect** | Remove your API key and project link |
+| **Disconnect** | Sign out of this folder's project and remove stored keys |
 | **Switch Environment** | Point the extension at production or a local Rampify server |
 
 ## Configuration
 
+Your sign-in and any API key are kept in your editor's secret storage (the system keychain), not in settings.
+
 | Setting | Description | Default |
 |---------|-------------|---------|
-| `rampify.apiKey` | Your Rampify API key | Not set |
 | `rampify.environment` | API environment (`production` or `local`) | `production` |
 | `rampify.localApiUrl` | Local API URL for development | `http://localhost:3000` |
-| `rampify.clientId` | Linked project (set by Setup Project Link) | Not set |
-| `rampify.domain` | Linked project's domain (set by Setup Project Link) | Not set |
+| `rampify.clientId` | Linked project (set when you sign in or link a project) | Not set |
+| `rampify.domain` | Linked project's domain (set when you sign in or link a project) | Not set |
 
 ## Requirements
 

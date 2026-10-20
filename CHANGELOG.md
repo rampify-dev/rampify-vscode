@@ -2,6 +2,21 @@
 
 All notable changes to the Rampify VS Code extension will be documented in this file.
 
+## [0.7.0] - 2026-10-20
+
+### Added
+- **Sign in with Rampify**: sign in (or create a free account) in the browser, pick or create a project, and come back to the editor with the folder linked. No API key to copy. Uses Rampify's OAuth sign-in, shown as "Rampify for VS Code"
+- **Home panel**: before setup, the sidebar explains what Rampify does (it now leads with "Turn your coding agent into a marketing agent"); after you sign in, it shows a setup checklist (add your site, connect your AI tool, create your first spec) and hands over to your specs once the first one exists
+- **Switch Project** command to link the folder to a different project
+
+### Changed
+- Your sign-in and API key are stored in the editor's secret storage (system keychain) instead of `settings.json`. An existing `rampify.apiKey` setting is moved there automatically
+- Each project's sign-in is stored separately, so signing in from another repo doesn't replace this one
+- **Use an API key instead** remains available for machines without a browser
+
+### Fixed
+- The specs list now picks up a new key right away instead of after a reload
+
 ## [0.6.0] - 2026-10-20
 
 ### Changed

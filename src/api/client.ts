@@ -97,8 +97,9 @@ export class RampifyApiClient {
   // CLIENT METHODS
   // ============================================================================
 
-  async getClients(): Promise<Client[]> {
-    const response = await this.axios.get<{ clients: Client[] }>('/clients');
+  /** `silent` skips the error toast (background refreshes report their own state). */
+  async getClients(opts: { silent?: boolean } = {}): Promise<Client[]> {
+    const response = await this.axios.get<{ clients: Client[] }>('/clients', { rampifySilent: opts.silent });
     return response.data.clients;
   }
 
@@ -147,9 +148,9 @@ export class RampifyApiClient {
     }
   }
 
-  async getSite(clientId: string): Promise<Site | null> {
+  async getSite(clientId: string, opts: { silent?: boolean } = {}): Promise<Site | null> {
     try {
-      const response = await this.axios.get<Site>(`/clients/${clientId}/site`);
+      const response = await this.axios.get<Site>(`/clients/${clientId}/site`, { rampifySilent: opts.silent });
       return response.data;
     } catch (error) {
       if (axios.isAxiosError(error) && error.response?.status === 404) {
@@ -162,6 +163,15 @@ export class RampifyApiClient {
   // ============================================================================
   // FEATURE SPEC METHODS
   // ============================================================================
+
+  /** Total specs for a project, without fetching them (limit=1, slim rows). */
+  async countFeatureSpecs(siteId: string): Promise<number> {
+    const response = await this.axios.get<{ page?: { total_count?: number }; count?: number }>(
+      `/sites/${siteId}/feature-specs?limit=1&summary_only=true`,
+      { rampifySilent: true }
+    );
+    return response.data.page?.total_count ?? response.data.count ?? 0;
+  }
 
   async getFeatureSpecs(siteId: string, status?: string): Promise<FeatureSpec[]> {
     const params = status ? `?status=${status}` : '';

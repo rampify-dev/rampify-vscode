@@ -2,7 +2,7 @@
   "name": "rampify",
   "displayName": "Rampify: Spec-Driven Development",
   "description": "Spec-driven development for AI coding tools. Define specs, track SEO issues, and verify fixes, so AI builds what you actually intended.",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "publisher": "rampify",
   "engines": {
     "vscode": "^1.85.0"
@@ -40,7 +40,8 @@
   "pricing": "Free",
   "icon": "resources/icon.png",
   "activationEvents": [
-    "onStartupFinished"
+    "onStartupFinished",
+    "onUri"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -50,8 +51,9 @@
         "rampify.apiKey": {
           "type": "string",
           "default": "",
-          "description": "Rampify API key for authentication",
-          "scope": "application"
+          "description": "Deprecated. Moved to secure storage automatically.",
+          "scope": "application",
+          "markdownDeprecationMessage": "No longer used: Rampify credentials are kept in your editor's secret storage. Use **Rampify: Sign In** or **Rampify: Set API Key**."
         },
         "rampify.environment": {
           "type": "string",
@@ -86,13 +88,23 @@
     },
     "commands": [
       {
+        "command": "rampify.signIn",
+        "title": "Rampify: Sign In",
+        "icon": "$(sign-in)"
+      },
+      {
+        "command": "rampify.switchProject",
+        "title": "Rampify: Switch Project",
+        "icon": "$(arrow-swap)"
+      },
+      {
         "command": "rampify.setupProject",
         "title": "Rampify: Setup Project Link",
         "icon": "$(link)"
       },
       {
         "command": "rampify.setApiKey",
-        "title": "Rampify: Set API Key"
+        "title": "Rampify: Set API Key (instead of signing in)"
       },
       {
         "command": "rampify.disconnect",
@@ -150,30 +162,22 @@
         }
       ]
     },
-    "viewsWelcome": [
-      {
-        "view": "rampify.featureSpecs",
-        "contents": "Get started with spec-driven development.\n[Create Free Account](command:rampify.openSignup)\nAlready have an account?\n[Connect Account](command:rampify.setApiKey)",
-        "when": "!rampify.hasApiKey"
-      },
-      {
-        "view": "rampify.featureSpecs",
-        "contents": "Account connected. Link a project to see your specs.\n[Link Project](command:rampify.setupProject)",
-        "when": "rampify.hasApiKey && !rampify.hasProject"
-      },
-      {
-        "view": "rampify.featureSpecs",
-        "contents": "No specs yet. Set up the MCP server so your AI tools can create specs.\n[Set Up MCP Server](command:rampify.installMcpServer)\n[View Documentation](command:rampify.openDocs)",
-        "when": "rampify.hasApiKey && rampify.hasProject"
-      }
-    ],
     "views": {
       "rampify": [
+        {
+          "type": "webview",
+          "id": "rampify.home",
+          "name": "Home",
+          "icon": "resources/icon.svg",
+          "contextualTitle": "Rampify",
+          "when": "!rampify.hasSpecs"
+        },
         {
           "id": "rampify.featureSpecs",
           "name": "Specs",
           "icon": "resources/icon.svg",
-          "contextualTitle": "Rampify"
+          "contextualTitle": "Rampify",
+          "when": "rampify.hasSpecs"
         }
       ]
     },
@@ -192,6 +196,21 @@
         {
           "command": "rampify.openFeatureSpecsInBrowser",
           "when": "view == rampify.featureSpecs",
+          "group": "navigation"
+        },
+        {
+          "command": "rampify.switchProject",
+          "when": "view == rampify.featureSpecs",
+          "group": "1_project@1"
+        },
+        {
+          "command": "rampify.disconnect",
+          "when": "view == rampify.featureSpecs",
+          "group": "1_project@2"
+        },
+        {
+          "command": "rampify.refreshFeatureSpecs",
+          "when": "view == rampify.home",
           "group": "navigation"
         }
       ],
