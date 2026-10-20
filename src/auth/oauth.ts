@@ -14,9 +14,9 @@ import axios from 'axios';
  *
  * Client identity: Rampify's first-party client (a metadata document listing
  * the extension callback for each VS Code-based editor), shown on the consent
- * screen as "Rampify for VS Code". An editor whose scheme isn't on that list,
- * or a remote/web window whose callback is rewritten by asExternalUri, falls
- * back to Dynamic Client Registration (shown as unverified).
+ * screen as "Rampify for VS Code". An editor whose scheme isn't on that list
+ * falls back to Dynamic Client Registration (shown as unverified). Browser-based
+ * editors aren't supported (their callback is an https URL); they use an API key.
  */
 
 /** Must match lib/auth/first-party-oauth-clients.ts in the Rampify app. */
@@ -30,6 +30,15 @@ const CALLBACK_AUTHORITY = 'rampify.rampify';
 const CALLBACK_PATH = '/auth-callback';
 const SIGN_IN_TIMEOUT_MS = 10 * 60 * 1000;
 const DCR_CACHE_KEY = 'rampify.oauthClients';
+
+export interface PreparedSignIn {
+  /** What openExternal is given. */
+  authorizeUri: vscode.Uri;
+  redirectUri: string;
+  clientId: string;
+  verifier: string;
+  state: string;
+}
 
 export interface SignInResult {
   accessToken: string;
@@ -70,20 +79,34 @@ export class RampifyOAuth implements vscode.UriHandler {
   }
 
   /**
-   * Run the whole browser round trip. `webUrl` is the Rampify origin
-   * (production or local dev). Rejects with SignInCancelled if the user
-   * cancels the progress notification.
+   * Build the authorize request. Separate from signIn so a real editor can be
+   * checked end to end without opening a browser.
    */
-  async signIn(webUrl: string): Promise<SignInResult> {
+  async prepare(webUrl: string): Promise<PreparedSignIn> {
     const callback = vscode.Uri.parse(`${vscode.env.uriScheme}://${CALLBACK_AUTHORITY}${CALLBACK_PATH}`);
+    // Browser-based editors (vscode.dev, Codespaces in the browser) rewrite the
+    // callback to an https URL we can't register ahead of time.
     const external = await vscode.env.asExternalUri(callback);
-    const redirectUri = external.toString(true);
-    const clientId = await this.clientIdFor(webUrl, redirectUri, callback.toString(true));
+    if (external.scheme !== vscode.env.uriScheme) {
+      throw new Error('Signing in from a browser-based editor isn\u2019t supported yet. Use \u201cUse an API key instead\u201d.');
+    }
+    // Desktop VS Code adds ?windowId=N to the external form. Don't use it: a '?'
+    // inside redirect_uri doesn't survive openExternal (VS Code hands the
+    // browser a decoded copy and re-encodes it, turning ?windowId into
+    // %253FwindowId), and it wouldn't match the first-party client's
+    // registered callback. The plain callback reaches the last active window,
+    // which is the one the user just clicked Sign in from.
+    const redirectUri = callback.toString(true);
+    const clientId = FIRST_PARTY_SCHEMES.has(vscode.env.uriScheme)
+      ? FIRST_PARTY_CLIENT_ID
+      : await this.registerClient(webUrl, redirectUri);
 
     const verifier = base64url(crypto.randomBytes(32));
     const challenge = base64url(crypto.createHash('sha256').update(verifier).digest());
     const state = base64url(crypto.randomBytes(16));
 
+    // Every value here is URL-safe once decoded (an https URL, a scheme://
+    // callback, base64url), which is what makes it survive openExternal.
     const authorize = new URL('/oauth/authorize', webUrl);
     authorize.searchParams.set('response_type', 'code');
     authorize.searchParams.set('client_id', clientId);
@@ -91,6 +114,17 @@ export class RampifyOAuth implements vscode.UriHandler {
     authorize.searchParams.set('state', state);
     authorize.searchParams.set('code_challenge', challenge);
     authorize.searchParams.set('code_challenge_method', 'S256');
+
+    return { authorizeUri: vscode.Uri.parse(authorize.toString()), redirectUri, clientId, verifier, state };
+  }
+
+  /**
+   * Run the whole browser round trip. `webUrl` is the Rampify origin
+   * (production or local dev). Rejects with SignInCancelled if the user
+   * cancels the progress notification.
+   */
+  async signIn(webUrl: string): Promise<SignInResult> {
+    const { authorizeUri, redirectUri, clientId, verifier, state } = await this.prepare(webUrl);
 
     const code = await vscode.window.withProgress(
       {
@@ -100,7 +134,7 @@ export class RampifyOAuth implements vscode.UriHandler {
       },
       (_progress, token) => {
         const waiting = this.waitForCode(state, token);
-        vscode.env.openExternal(vscode.Uri.parse(authorize.toString()));
+        vscode.env.openExternal(authorizeUri);
         return waiting;
       }
     );
@@ -139,11 +173,8 @@ export class RampifyOAuth implements vscode.UriHandler {
     });
   }
 
-  /** First-party client when the editor's callback is on its list, else DCR (cached). */
-  private async clientIdFor(webUrl: string, redirectUri: string, plainCallback: string): Promise<string> {
-    if (FIRST_PARTY_SCHEMES.has(vscode.env.uriScheme) && redirectUri === plainCallback) {
-      return FIRST_PARTY_CLIENT_ID;
-    }
+  /** Dynamic Client Registration for editors not on the first-party list (cached). */
+  private async registerClient(webUrl: string, redirectUri: string): Promise<string> {
     const cache = this.globalState.get<Record<string, string>>(DCR_CACHE_KEY) ?? {};
     const cacheKey = `${webUrl}|${redirectUri}`;
     if (cache[cacheKey]) { return cache[cacheKey]; }

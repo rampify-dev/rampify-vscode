@@ -2,6 +2,12 @@
 
 All notable changes to the Rampify VS Code extension will be documented in this file.
 
+## [0.7.1] - 2026-10-20
+
+### Fixed
+- **Sign in with Rampify** failed in desktop VS Code with "The return address does not match the one this app registered." VS Code adds a window id to the extension's sign-in address, and that address was garbled on its way to the browser. The extension now uses the plain address, which Rampify recognizes as "Rampify for VS Code"
+- Browser-based editors (vscode.dev) now say up front that sign-in isn't supported there yet and to use an API key, instead of failing partway
+
 ## [0.7.0] - 2026-10-20
 
 ### Added
