@@ -5,10 +5,7 @@
 If you just want to **use** the extension while working on Rampify:
 
 ```bash
-# One-time setup
-npm install -g @vscode/vsce
-
-# Install/update extension
+# Build, package and install into VS Code or Cursor
 ./scripts/install-local.sh
 
 # Reload VS Code (Cmd+Shift+P → "Developer: Reload Window")
@@ -98,24 +95,19 @@ Now the extension talks to your local API!
 ```
 packages/vscode-extension/
 ├── src/
-│   ├── extension.ts                    # Entry point, commands
+│   ├── extension.ts                    # Entry point: commands, project linking, MCP setup
 │   ├── api/
-│   │   ├── client.ts                   # API client
-│   │   └── types.ts                    # TypeScript types
+│   │   ├── client.ts                   # API client (axios, per-environment base URL)
+│   │   └── types.ts                    # API response types
 │   ├── providers/
-│   │   ├── action-plan-tree-provider.ts    # Sidebar tree view
-│   │   ├── diagnostics.ts                  # Problems panel (action plan)
-│   │   ├── diagnostics-simple.ts           # Problems panel (local scans)
-│   │   ├── code-actions.ts                 # Quick fix suggestions
-│   │   └── codelens.ts                     # Inline scan buttons
-│   ├── views/
-│   │   └── action-detail-panel.ts      # Action details webview
+│   │   └── feature-specs-tree-provider.ts  # Specs sidebar tree
+│   ├── types/
+│   │   └── markdown.d.ts               # .md imports (bundled as text by esbuild)
 │   └── utils/
-│       ├── project-config.ts           # Project linking
-│       ├── local-scanner.ts            # Localhost page scanner
-│       ├── file-resolver.ts            # File → URL resolution
-│       └── url-mapper.ts               # URL → File mapping
-├── out/                                # Compiled JavaScript (generated)
+│       └── project-config.ts           # Workspace link + domain detection
+├── resources/                          # Icons
+├── scripts/install-local.sh            # Build, package, install locally
+├── out/                                # Bundled JavaScript (generated)
 ├── package.json                        # Extension manifest
 └── tsconfig.json                       # TypeScript config
 ```
@@ -167,7 +159,7 @@ packages/vscode-extension/
 
 ### Update Tree View
 
-Edit `providers/action-plan-tree-provider.ts`:
+Edit `providers/feature-specs-tree-provider.ts`:
 - `getChildren()` - Controls tree structure
 - `getTreeItem()` - Controls item appearance
 - `refresh()` - Triggers tree refresh
@@ -178,7 +170,7 @@ Edit `providers/action-plan-tree-provider.ts`:
 
 ### Extension doesn't load
 - Check Debug Console for errors
-- Ensure `npm run compile` succeeded
+- Ensure `npm run compile` and `npm run bundle` succeeded
 - Try "Developer: Reload Window" in Extension Development Host
 
 ### Breakpoints not hitting
@@ -193,39 +185,45 @@ Edit `providers/action-plan-tree-provider.ts`:
 - Check Debug Console for detailed error messages
 
 ### Tree view not updating
-- Call `actionPlanProvider.refresh()` after data changes
+- Call `featureSpecsProvider.refresh()` after data changes
 - Check `loadData()` for errors
 - Verify API returns expected data structure
 
 ---
 
-## Publishing (Future)
+## Releasing
 
-When ready to publish to VS Code Marketplace:
+The extension is published to two registries from the same `.vsix`:
 
-1. **Create publisher account**
-   - Visit https://marketplace.visualstudio.com/manage
-   - Sign in with Microsoft account
+- **VS Code Marketplace** as `rampify.rampify` (publisher `rampify`), for VS Code
+- **Open VSX** as `Rampify/rampify`, for Cursor, Windsurf, Antigravity, VSCodium and other editors built on VS Code
 
-2. **Add repository to package.json**
-   ```json
-   "repository": {
-     "type": "git",
-     "url": "https://github.com/your-org/rampify"
-   }
-   ```
+### One-time setup
 
-3. **Package and publish**
+- **Marketplace:** run `npx @vscode/vsce login rampify` and paste a Personal Access Token from the publisher's Azure DevOps organization (scope: Marketplace → Manage). vsce stores it in the macOS keychain, so `npx @vscode/vsce ls-publishers` listing `rampify` means you're set.
+- **Open VSX:** create an access token at https://open-vsx.org/user-settings/tokens and store it in the macOS Keychain, where `publish:ovsx` reads it:
+  ```bash
+  security add-generic-password -U -a rampify -s rampify-ovsx-pat -w '<token>'
+  ```
+  An `OVSX_PAT` environment variable overrides the Keychain entry. Keep the token out of shell profiles and history.
+
+### Each release
+
+1. Bump `version` in `package.json` (`npm version minor --no-git-tag-version`) and add a `CHANGELOG.md` entry. The CHANGELOG is shown on both registries.
+2. Check it builds clean: `npm run compile && npm run lint`.
+3. Merge the change to `main` through a PR as usual.
+4. From `packages/vscode-extension` on an up-to-date `main`:
    ```bash
-   vsce package
-   vsce publish
+   npm ci
+   npm run release
    ```
+   `release` builds `rampify-<version>.vsix` once and publishes that same file to the Marketplace (`publish:vsce`) and Open VSX (`publish:ovsx`). If one registry fails, fix it and rerun just that script; the `.vsix` is still there.
+5. Check both listings show the new version (they take a few minutes to update): `npx @vscode/vsce show rampify.rampify` and https://open-vsx.org/extension/Rampify/rampify.
+6. Sync the public mirror (github.com/rampify-dev/rampify-vscode) and tag the version: `npm run sync:mirror` (add `-- --dry` to preview).
 
-4. **Update version**
-   ```bash
-   npm version patch  # or minor, major
-   vsce publish
-   ```
+The `.claude/rules/rampify.md` template lives at `src/templates/rampify-rules.md`, a copy of `packages/rampify-cli/templates/.claude/rules/rampify.md` kept here so the mirror builds on its own. `tests/unit/vscode-rules-template-sync.test.ts` fails if the two differ; update both together.
+
+The `.vsix` is gitignored; delete it after the release.
 
 ---
 
@@ -236,4 +234,4 @@ When ready to publish to VS Code Marketplace:
 - **Test edge cases** - No project linked, no API key, network errors
 - **Reload often** - Cmd+R in Extension Development Host after changes
 - **Use breakpoints** - Easier than console.log for complex debugging
-- **Test multi-environment** - Production, staging, and local APIs
+- **Test multi-environment** - Production and local APIs

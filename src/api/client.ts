@@ -1,18 +1,25 @@
 import axios, { AxiosInstance, AxiosError } from 'axios';
 import * as vscode from 'vscode';
 import {
-  ActionItem,
-  ActionSnapshot,
-  Phase,
   Client,
   Site,
   FeatureSpec,
   CreateClientRequest,
-  UpdateActionStatusRequest,
+  CreateClientResult,
+  ProjectQuota,
   ApiError
 } from './types';
 
 export type Environment = 'production' | 'staging' | 'local';
+
+declare module 'axios' {
+  interface AxiosRequestConfig {
+    /** Skip the interceptor's error toast; the caller reports the failure. */
+    rampifySilent?: boolean;
+  }
+}
+
+export type ApiKeyCheck = 'valid' | 'invalid' | 'unreachable';
 
 export interface RampifyConfig {
   apiKey: string;
@@ -32,7 +39,6 @@ export class RampifyApiClient {
       baseURL,
       environment: config.environment,
       hasApiKey: !!config.apiKey,
-      apiKeyPrefix: config.apiKey?.substring(0, 15),
     });
 
     this.axios = axios.create({
@@ -48,13 +54,18 @@ export class RampifyApiClient {
     this.axios.interceptors.response.use(
       (response) => response,
       (error: AxiosError<ApiError>) => {
+        // Never log request headers: they carry the API key.
         console.error('API Error:', {
           status: error.response?.status,
           statusText: error.response?.statusText,
           data: error.response?.data,
+          method: error.config?.method,
           url: error.config?.url,
-          headers: error.config?.headers,
         });
+
+        if (error.config?.rampifySilent) {
+          return Promise.reject(error);
+        }
 
         if (error.response?.status === 401) {
           const errorMsg = error.response?.data?.error || 'Invalid API key';
@@ -91,14 +102,49 @@ export class RampifyApiClient {
     return response.data.clients;
   }
 
-  async getClient(clientId: string): Promise<Client> {
-    const response = await this.axios.get<Client>(`/clients/${clientId}`);
-    return response.data;
+  /**
+   * Create a workspace + project. Failures come back as values (no toast) so
+   * the caller can turn a plan limit into an upgrade prompt.
+   */
+  async createClient(data: CreateClientRequest): Promise<CreateClientResult> {
+    try {
+      const response = await this.axios.post<{ client: Client }>('/clients', data, { rampifySilent: true });
+      return { ok: true, client: response.data.client };
+    } catch (error) {
+      if (!axios.isAxiosError(error)) { throw error; }
+      const body = (error.response?.data ?? {}) as ApiError & {
+        code?: string;
+        quota?: ProjectQuota;
+        upgrade?: ProjectQuota['upgrade'];
+      };
+      const message = body.error || error.message || 'Could not create the project.';
+      if (error.response?.status === 403) {
+        if (body.code === 'project_limit_reached' || body.quota) {
+          return {
+            ok: false,
+            reason: 'limit',
+            quota: { ...body.quota, upgrade: body.upgrade ?? body.quota?.upgrade },
+            message,
+          };
+        }
+        return { ok: false, reason: 'scoped_key', message };
+      }
+      return { ok: false, reason: 'error', message };
+    }
   }
 
-  async createClient(data: CreateClientRequest): Promise<Client> {
-    const response = await this.axios.post<{ client: Client }>('/clients', data);
-    return response.data.client;
+  /**
+   * The account's project allowance, or null when the server doesn't report
+   * it (older deployments) or can't be reached. Callers then just attempt the
+   * create and handle a limit response.
+   */
+  async getProjectQuota(): Promise<ProjectQuota | null> {
+    try {
+      const response = await this.axios.get<{ project_quota?: ProjectQuota }>('/me/projects', { rampifySilent: true });
+      return response.data.project_quota ?? null;
+    } catch {
+      return null;
+    }
   }
 
   async getSite(clientId: string): Promise<Site | null> {
@@ -114,54 +160,6 @@ export class RampifyApiClient {
   }
 
   // ============================================================================
-  // ACTION PLAN METHODS
-  // ============================================================================
-
-  async getLatestSnapshot(siteId: string): Promise<ActionSnapshot | null> {
-    try {
-      const response = await this.axios.get<ActionSnapshot>(
-        `/sites/${siteId}/action-snapshots/latest`
-      );
-      return response.data;
-    } catch (error) {
-      if (axios.isAxiosError(error) && error.response?.status === 404) {
-        return null;
-      }
-      throw error;
-    }
-  }
-
-  async getActionItems(snapshotId: string): Promise<ActionItem[]> {
-    const response = await this.axios.get<ActionItem[]>(
-      `/action-snapshots/${snapshotId}/actions`
-    );
-    return response.data;
-  }
-
-  async getPhases(siteId: string): Promise<Phase[]> {
-    const response = await this.axios.get<Phase[]>(`/sites/${siteId}/phases`);
-    return response.data;
-  }
-
-  async updateActionStatus(
-    actionId: string,
-    data: UpdateActionStatusRequest
-  ): Promise<ActionItem> {
-    const response = await this.axios.patch<ActionItem>(
-      `/action-items/${actionId}/status`,
-      data
-    );
-    return response.data;
-  }
-
-  async generateSnapshot(siteId: string): Promise<ActionSnapshot> {
-    const response = await this.axios.post<ActionSnapshot>(
-      `/sites/${siteId}/action-snapshots/generate`
-    );
-    return response.data;
-  }
-
-  // ============================================================================
   // FEATURE SPEC METHODS
   // ============================================================================
 
@@ -173,24 +171,22 @@ export class RampifyApiClient {
     return response.data.specs;
   }
 
-  async updateFeatureSpecStatus(
-    specId: string,
-    siteId: string,
-    status: FeatureSpec['status']
-  ): Promise<void> {
-    await this.axios.patch(`/sites/${siteId}/feature-specs/${specId}`, { status });
-  }
-
   // ============================================================================
   // HELPER METHODS
   // ============================================================================
 
-  async testConnection(): Promise<boolean> {
+  /**
+   * Check the API key against an authenticated endpoint. (/health is public,
+   * so it reported every key as valid.) /me/projects accepts account and
+   * project-scoped keys alike.
+   */
+  async validateApiKey(): Promise<ApiKeyCheck> {
     try {
-      await this.axios.get('/health');
-      return true;
-    } catch {
-      return false;
+      await this.axios.get('/me/projects', { rampifySilent: true });
+      return 'valid';
+    } catch (error) {
+      const status = axios.isAxiosError(error) ? error.response?.status : undefined;
+      return status === 401 || status === 403 ? 'invalid' : 'unreachable';
     }
   }
 

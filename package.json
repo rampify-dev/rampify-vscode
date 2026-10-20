@@ -1,8 +1,8 @@
 {
   "name": "rampify",
-  "displayName": "Rampify — Spec-Driven Development",
-  "description": "Spec-driven development for AI coding tools. Define specs, track SEO issues, and verify fixes — so AI builds what you actually intended.",
-  "version": "0.3.2",
+  "displayName": "Rampify: Spec-Driven Development",
+  "description": "Spec-driven development for AI coding tools. Define specs, track SEO issues, and verify fixes, so AI builds what you actually intended.",
+  "version": "0.6.0",
   "publisher": "rampify",
   "engines": {
     "vscode": "^1.85.0"
@@ -95,6 +95,18 @@
         "title": "Rampify: Set API Key"
       },
       {
+        "command": "rampify.disconnect",
+        "title": "Rampify: Disconnect"
+      },
+      {
+        "command": "rampify.openSignup",
+        "title": "Rampify: Create Free Account"
+      },
+      {
+        "command": "rampify.openDocs",
+        "title": "Rampify: Open Documentation"
+      },
+      {
         "command": "rampify.switchEnvironment",
         "title": "Rampify: Switch Environment"
       },
@@ -125,7 +137,7 @@
       },
       {
         "command": "rampify.toggleResolvedSpecs",
-        "title": "Rampify: Toggle Resolved Specs",
+        "title": "Rampify: Show/Hide Resolved and Idea Specs",
         "icon": "$(eye)"
       }
     ],
@@ -138,6 +150,23 @@
         }
       ]
     },
+    "viewsWelcome": [
+      {
+        "view": "rampify.featureSpecs",
+        "contents": "Get started with spec-driven development.\n[Create Free Account](command:rampify.openSignup)\nAlready have an account?\n[Connect Account](command:rampify.setApiKey)",
+        "when": "!rampify.hasApiKey"
+      },
+      {
+        "view": "rampify.featureSpecs",
+        "contents": "Account connected. Link a project to see your specs.\n[Link Project](command:rampify.setupProject)",
+        "when": "rampify.hasApiKey && !rampify.hasProject"
+      },
+      {
+        "view": "rampify.featureSpecs",
+        "contents": "No specs yet. Set up the MCP server so your AI tools can create specs.\n[Set Up MCP Server](command:rampify.installMcpServer)\n[View Documentation](command:rampify.openDocs)",
+        "when": "rampify.hasApiKey && rampify.hasProject"
+      }
+    ],
     "views": {
       "rampify": [
         {
@@ -182,12 +211,16 @@
   },
   "scripts": {
     "vscode:prepublish": "npm run bundle",
-    "bundle": "esbuild src/extension.ts --bundle --outfile=out/extension.js --external:vscode --platform=node --target=node20 --minify",
-    "package": "npm run bundle && npx vsce package --no-dependencies",
+    "bundle": "esbuild src/extension.ts --bundle --loader:.md=text --outfile=out/extension.js --external:vscode --platform=node --target=node20 --minify",
+    "package": "npm run bundle && npx @vscode/vsce package --no-dependencies",
+    "publish:vsce": "npx @vscode/vsce publish --no-dependencies --packagePath rampify-$npm_package_version.vsix",
+    "publish:ovsx": "npx ovsx publish rampify-$npm_package_version.vsix -p \"${OVSX_PAT:-$(security find-generic-password -s rampify-ovsx-pat -w)}\"",
+    "sync:mirror": "bash scripts/sync-mirror.sh",
+    "release": "npm run package && npm run publish:vsce && npm run publish:ovsx",
     "compile": "tsc -p ./ --noEmit",
-    "watch": "esbuild src/extension.ts --bundle --outfile=out/extension.js --external:vscode --platform=node --target=node20 --watch",
+    "watch": "esbuild src/extension.ts --bundle --loader:.md=text --outfile=out/extension.js --external:vscode --platform=node --target=node20 --watch",
     "pretest": "npm run bundle && npm run lint",
-    "lint": "eslint src --ext ts",
+    "lint": "ESLINT_USE_FLAT_CONFIG=false eslint src --ext ts",
     "test": "node ./out/test/runTest.js"
   },
   "devDependencies": {

@@ -2,65 +2,20 @@
  * Rampify API Type Definitions
  */
 
-export interface ActionItem {
+/** A project's display fields, joined onto each workspace by GET /clients. */
+export interface ClientProject {
   id: string;
-  siteId: string;
-  snapshotId: string;
-  category: 'url_health' | 'indexing' | 'content' | 'performance' | 'structured_data';
-  actionType: string;
-  priority: 'critical' | 'high' | 'medium' | 'low';
-  status: 'new' | 'in_progress' | 'completed' | 'dismissed';
-  title: string;
-  description: string;
-  affectedCount: number;
-  metadata: {
-    impact_description?: string;
-    fix_instructions?: string;
-    effort_estimate?: 'quick' | 'medium' | 'complex';
-    example_urls?: string[];
-    [key: string]: any;
-  };
-  relevantPhases: Array<'pre_launch' | 'initial_submission' | 'indexing' | 'public_launch' | 'growth'>;
-  requiredPhase: 'pre_launch' | 'initial_submission' | 'indexing' | 'public_launch' | 'growth' | null;
-  blocksPhase: 'pre_launch' | 'initial_submission' | 'indexing' | 'public_launch' | 'growth' | null;
-  createdAt: string;
-  updatedAt: string;
-  completedAt: string | null;
-}
-
-export interface ActionSnapshot {
-  id: string;
-  siteId: string;
-  phaseId: string;
-  snapshotDate: string;
-  totalActions: number;
-  criticalCount: number;
-  highCount: number;
-  mediumCount: number;
-  lowCount: number;
-  completedCount: number;
-  newCount: number;
-  inProgressCount: number;
-  dismissedCount: number;
-  isLatest: boolean;
-  createdAt: string;
-}
-
-export interface Phase {
-  id: string;
-  siteId: string;
-  phaseType: 'pre_launch' | 'initial_submission' | 'indexing' | 'public_launch' | 'growth';
-  status: 'not_started' | 'in_progress' | 'completed' | 'blocked';
-  startedAt: string | null;
-  completedAt: string | null;
-  createdAt: string;
-  updatedAt: string;
+  name: string | null;
+  brand_name: string | null;
+  domain: string | null;
 }
 
 export interface Client {
   id: string;
-  company_name: string;
-  domain: string;
+  /** Null for projects created from the dashboard's name-first modal. */
+  company_name: string | null;
+  /** PostgREST returns the 1:1 join as an object or a one-element array. */
+  projects?: ClientProject | ClientProject[] | null;
   contact_email: string | null;
   contact_name: string | null;
   status: 'prospect' | 'active' | 'paused' | 'churned';
@@ -82,24 +37,45 @@ export interface Site {
   updated_at: string;
 }
 
+/**
+ * Name only, like the dashboard's New Project modal. The setup wizard collects
+ * the domain and project type afterwards.
+ */
 export interface CreateClientRequest {
-  companyName: string;
-  domain?: string;
-  contactEmail?: string;
-  contactName?: string;
+  projectName: string;
 }
 
-export interface UpdateActionStatusRequest {
-  status: 'new' | 'in_progress' | 'completed' | 'dismissed';
+/**
+ * The account's project allowance (Free 1 / Starter 5 / Pro 10). Read from
+ * GET /me/projects `project_quota` and from the 403 body when POST /clients
+ * hits the limit. Older servers send only { current, limit } on the 403.
+ */
+export interface ProjectQuota {
+  allowed?: boolean;
+  current?: number;
+  /** null = unlimited (admins). */
+  limit?: number | null;
+  tier?: string;
+  /** Display name of the plan, e.g. "Free". */
+  tier_label?: string;
+  reason?: 'limit_reached' | 'viewer' | 'scoped_key' | null;
+  message?: string | null;
+  /** The next plan up; null at the top tier. url is a same-origin path. */
+  upgrade?: { plan: string; url: string; label: string } | null;
 }
+
+export type CreateClientResult =
+  | { ok: true; client: Client }
+  | { ok: false; reason: 'limit'; quota: ProjectQuota; message: string }
+  | { ok: false; reason: 'scoped_key' | 'error'; message: string };
 
 export interface FeatureSpec {
   id: string;
   project_id: string;
   title: string;
   description: string | null;
-  feature_type: 'new_feature' | 'enhancement' | 'refactor' | 'bug_fix' | 'optimization';
-  status: 'planned' | 'in_progress' | 'completed' | 'verified' | 'deprecated';
+  feature_type: 'new_feature' | 'enhancement' | 'refactor' | 'bug_fix' | 'optimization' | 'page' | 'positioning';
+  status: 'idea' | 'planned' | 'in_progress' | 'completed' | 'verified' | 'deprecated';
   priority: 'critical' | 'high' | 'normal' | 'low';
   tech_stack: string[];
   affected_files: string[];
@@ -111,10 +87,11 @@ export interface FeatureSpec {
   fix_instructions: string | null;
   ai_context_summary: string | null;
   next_action: string | null;
-  criteria_count: number;
-  tasks_count: number;
-  completed_tasks_count: number;
-  verified_criteria_count: number;
+  opportunity_id: string | null;
+  /** 'marketing' specs are the dashboard's Content tab, 'product' its Build tab. */
+  work_domain: 'marketing' | 'product' | null;
+  /** Dashboard link for this spec (production host), set by the API. */
+  dashboard_url: string | null;
   created_at: string;
   updated_at: string;
 }

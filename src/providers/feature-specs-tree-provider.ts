@@ -10,6 +10,7 @@ const STATUS_ORDER: FeatureSpec['status'][] = [
   'in_progress',
   'completed',
   'verified',
+  'idea',
   'deprecated',
 ];
 
@@ -18,6 +19,7 @@ const STATUS_LABELS: Record<FeatureSpec['status'], string> = {
   planned: 'Planned',
   completed: 'Completed',
   verified: 'Verified',
+  idea: 'Idea',
   deprecated: 'Deprecated',
 };
 
@@ -26,6 +28,7 @@ const STATUS_ICONS: Record<FeatureSpec['status'], string> = {
   planned: 'lightbulb',
   completed: 'pass-filled',
   verified: 'verified-filled',
+  idea: 'comment',
   deprecated: 'circle-slash',
 };
 
@@ -49,6 +52,8 @@ const TYPE_LABELS: Record<FeatureSpec['feature_type'], string> = {
   refactor: 'Refactor',
   bug_fix: 'Bug Fix',
   optimization: 'Optimization',
+  page: 'Page',
+  positioning: 'Positioning',
 };
 
 class StatusGroupTreeItem extends vscode.TreeItem {
@@ -80,7 +85,7 @@ class FeatureSpecTreeItem extends vscode.TreeItem {
       new vscode.ThemeColor(PRIORITY_COLORS[spec.priority])
     );
 
-    // Description: "SEO · 4 URLs" for findings, "Enhancement · 2/5 tasks" for user specs
+    // Description: "SEO · 4 URLs" for findings, the spec type for user specs
     if (isFinding) {
       const moduleLabel = (spec.module || 'scan').toUpperCase();
       const urlCount = spec.affected_urls?.length || 0;
@@ -88,18 +93,18 @@ class FeatureSpecTreeItem extends vscode.TreeItem {
         ? `${moduleLabel} · ${urlCount} URL${urlCount !== 1 ? 's' : ''}`
         : moduleLabel;
     } else {
-      const typeLabel = TYPE_LABELS[spec.feature_type];
-      const progress = spec.tasks_count > 0
-        ? ` · ${spec.completed_tasks_count}/${spec.tasks_count} tasks`
-        : '';
-      this.description = `${typeLabel}${progress}`;
+      this.description = TYPE_LABELS[spec.feature_type] ?? spec.feature_type;
     }
 
     // Tooltip with full context
     const tooltip = new vscode.MarkdownString();
     tooltip.appendMarkdown(`**${spec.title}**\n\n`);
     if (spec.description) {
-      tooltip.appendMarkdown(`${spec.description}\n\n`);
+      // Spec bodies can run to pages; the tooltip is a preview.
+      const preview = spec.description.length > TOOLTIP_DESCRIPTION_CHARS
+        ? `${spec.description.slice(0, TOOLTIP_DESCRIPTION_CHARS).trimEnd()}…`
+        : spec.description;
+      tooltip.appendMarkdown(`${preview}\n\n`);
     }
     if (isFinding && spec.fix_instructions) {
       tooltip.appendMarkdown(`**Fix:** ${spec.fix_instructions}\n\n`);
@@ -138,15 +143,19 @@ class MessageTreeItem extends vscode.TreeItem {
   }
 }
 
-const STALE_TTL_MS = 30_000; // 30 seconds
-const RESOLVED_STATUSES: Set<FeatureSpec['status']> = new Set(['completed', 'verified', 'deprecated']);
+const STALE_TTL_MS = 300_000; // 5 minutes
+const TOOLTIP_DESCRIPTION_CHARS = 600;
+/**
+ * Hidden unless "show resolved" is on. Ideas are uncommitted, so like the
+ * dashboard's default view they stay out of the working list.
+ */
+const HIDDEN_BY_DEFAULT: Set<FeatureSpec['status']> = new Set(['completed', 'verified', 'deprecated', 'idea']);
 
 export class FeatureSpecsTreeProvider implements vscode.TreeDataProvider<TreeItem> {
   private _onDidChangeTreeData = new vscode.EventEmitter<TreeItem | undefined | null | void>();
   readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
 
   private specs: FeatureSpec[] = [];
-  private siteId: string | null = null;
   private loaded = false;
   private lastLoadedAt = 0;
   private showResolved = false;
@@ -171,7 +180,6 @@ export class FeatureSpecsTreeProvider implements vscode.TreeDataProvider<TreeIte
     this.loaded = false;
     this.lastLoadedAt = 0;
     this.specs = [];
-    this.siteId = null;
     this._onDidChangeTreeData.fire();
   }
 
@@ -187,10 +195,8 @@ export class FeatureSpecsTreeProvider implements vscode.TreeDataProvider<TreeIte
   async getChildren(element?: TreeItem): Promise<TreeItem[]> {
     const projectConfig = getProjectConfig();
     if (!projectConfig) {
-      return [
-        new MessageTreeItem('No project linked', 'warning'),
-        new MessageTreeItem('Click "Setup Project Link" to get started', 'link'),
-      ];
+      // Welcome View handles this state via viewsWelcome in package.json
+      return [];
     }
 
     try {
@@ -199,15 +205,8 @@ export class FeatureSpecsTreeProvider implements vscode.TreeDataProvider<TreeIte
       }
 
       if (this.specs.length === 0) {
-        const setupItem = new MessageTreeItem('Set up MCP server to create specs with AI', 'terminal');
-        setupItem.command = {
-          command: 'rampify.installMcpServer',
-          title: 'Set Up MCP Server'
-        };
-        return [
-          new MessageTreeItem('No feature specs yet', 'info'),
-          setupItem,
-        ];
+        // Welcome View handles this state via viewsWelcome in package.json
+        return [];
       }
 
       // Root: status groups
@@ -215,7 +214,7 @@ export class FeatureSpecsTreeProvider implements vscode.TreeDataProvider<TreeIte
         const grouped = this.groupByStatus();
         return STATUS_ORDER
           .filter(status => grouped.has(status))
-          .filter(status => this.showResolved || !RESOLVED_STATUSES.has(status))
+          .filter(status => this.showResolved || !HIDDEN_BY_DEFAULT.has(status))
           .map(status => new StatusGroupTreeItem(status, grouped.get(status)!.length));
       }
 
@@ -251,7 +250,6 @@ export class FeatureSpecsTreeProvider implements vscode.TreeDataProvider<TreeIte
       return;
     }
 
-    this.siteId = site.id;
     this.specs = await this.apiClient.getFeatureSpecs(site.id);
     this.loaded = true;
     this.lastLoadedAt = Date.now();
@@ -266,7 +264,4 @@ export class FeatureSpecsTreeProvider implements vscode.TreeDataProvider<TreeIte
     return map;
   }
 
-  getSiteId(): string | null {
-    return this.siteId;
-  }
 }

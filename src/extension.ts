@@ -6,7 +6,11 @@ import {
   saveProjectConfig,
   detectProjectDomain,
 } from './utils/project-config';
-import { Client, FeatureSpec } from './api/types';
+import { Client, ClientProject, FeatureSpec, ProjectQuota } from './api/types';
+// Copy of the rules file `rampify init` installs (bundled as text by esbuild).
+// Kept inside this package so the standalone mirror repo builds; a unit test
+// (tests/unit/vscode-rules-template-sync.test.ts) fails if the copies drift.
+import rulesTemplate from './templates/rampify-rules.md';
 
 let apiClient: RampifyApiClient;
 let featureSpecsProvider: FeatureSpecsTreeProvider;
@@ -25,14 +29,15 @@ export function activate(context: vscode.ExtensionContext) {
   });
   context.subscriptions.push(featureSpecsView);
 
-  // Poll for new specs while the panel is visible (covers MCP tool creating specs in the same window)
-  const POLL_INTERVAL_MS = 30_000;
+  // Poll for new specs — only when sidebar is visible AND window is focused
+  const POLL_INTERVAL_MS = 300_000; // 5 minutes
   let pollTimer: ReturnType<typeof setInterval> | undefined;
+  let windowFocused = true;
 
   const startPolling = () => {
     if (pollTimer) { return; }
     pollTimer = setInterval(() => {
-      if (featureSpecsProvider.isStale()) {
+      if (windowFocused && featureSpecsProvider.isStale()) {
         featureSpecsProvider.refresh();
       }
     }, POLL_INTERVAL_MS);
@@ -58,6 +63,16 @@ export function activate(context: vscode.ExtensionContext) {
     })
   );
 
+  // Refresh when window regains focus (catches external spec changes)
+  context.subscriptions.push(
+    vscode.window.onDidChangeWindowState((e) => {
+      windowFocused = e.focused;
+      if (e.focused && featureSpecsProvider.isStale()) {
+        featureSpecsProvider.refresh();
+      }
+    })
+  );
+
   // Clean up timer on deactivate
   context.subscriptions.push({ dispose: stopPolling });
 
@@ -71,6 +86,25 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.commands.registerCommand('rampify.setApiKey', async () => {
       await setApiKey();
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('rampify.disconnect', async () => {
+      const confirm = await vscode.window.showWarningMessage(
+        'Disconnect from Rampify? This will clear your API key and project link.',
+        { modal: true },
+        'Disconnect'
+      );
+      if (confirm === 'Disconnect') {
+        const config = vscode.workspace.getConfiguration('rampify');
+        await config.update('apiKey', undefined, vscode.ConfigurationTarget.Global);
+        await config.update('clientId', undefined, vscode.ConfigurationTarget.Workspace);
+        await config.update('domain', undefined, vscode.ConfigurationTarget.Workspace);
+        updateOnboardingContext();
+        featureSpecsProvider.refresh();
+        vscode.window.showInformationMessage('Disconnected from Rampify.');
+      }
     })
   );
 
@@ -105,7 +139,11 @@ export function activate(context: vscode.ExtensionContext) {
           cId = clientId!;
           wUrl = webUrl!;
         }
-        const url = `${wUrl}/clients/${cId}/features/${spec.id}`;
+        // The API's dashboard_url always points at production, so build the
+        // link from the configured host when running against local dev.
+        const url = spec.dashboard_url && getEnvironment() !== 'local'
+          ? spec.dashboard_url
+          : `${wUrl}/clients/${cId}/features/${spec.id}`;
         vscode.env.openExternal(vscode.Uri.parse(url));
       }
     )
@@ -159,35 +197,28 @@ export function activate(context: vscode.ExtensionContext) {
       if (e.affectsConfiguration('rampify')) {
         // Recreate API client with new config
         apiClient = createApiClient();
+        updateOnboardingContext();
         featureSpecsProvider.refresh();
       }
     })
   );
 
-  // Auto-setup if not configured
-  const projectConfig = getProjectConfig();
-  const config = vscode.workspace.getConfiguration('rampify');
-  const apiKey = config.get<string>('apiKey');
+  // Open signup with attribution
+  context.subscriptions.push(
+    vscode.commands.registerCommand('rampify.openSignup', () => {
+      vscode.env.openExternal(vscode.Uri.parse(getSignupUrl()));
+    })
+  );
 
-  if (!apiKey) {
-    vscode.window.showInformationMessage(
-      'Rampify: Set up your API key to get started',
-      'Set API Key'
-    ).then(selection => {
-      if (selection === 'Set API Key') {
-        vscode.commands.executeCommand('rampify.setApiKey');
-      }
-    });
-  } else if (!projectConfig) {
-    vscode.window.showInformationMessage(
-      'Rampify: Link this project to a client',
-      'Setup Project Link'
-    ).then(selection => {
-      if (selection === 'Setup Project Link') {
-        vscode.commands.executeCommand('rampify.setupProject');
-      }
-    });
-  }
+  // Open docs
+  context.subscriptions.push(
+    vscode.commands.registerCommand('rampify.openDocs', () => {
+      vscode.env.openExternal(vscode.Uri.parse(MCP_SETUP_DOCS_URL));
+    })
+  );
+
+  // Set initial onboarding context keys
+  updateOnboardingContext();
 }
 
 export function deactivate() {
@@ -197,6 +228,15 @@ export function deactivate() {
 // ============================================================================
 // HELPER FUNCTIONS
 // ============================================================================
+
+/** Update VS Code context keys that control which Welcome View is shown. */
+function updateOnboardingContext(): void {
+  const config = vscode.workspace.getConfiguration('rampify');
+  const hasApiKey = !!(config.get<string>('apiKey'));
+  const hasProject = !!(getProjectConfig()?.clientId);
+  vscode.commands.executeCommand('setContext', 'rampify.hasApiKey', hasApiKey);
+  vscode.commands.executeCommand('setContext', 'rampify.hasProject', hasProject);
+}
 
 function createApiClient(): RampifyApiClient {
   const config = vscode.workspace.getConfiguration('rampify');
@@ -211,11 +251,14 @@ function createApiClient(): RampifyApiClient {
   });
 }
 
+function getEnvironment(): Environment {
+  return vscode.workspace.getConfiguration('rampify').get<Environment>('environment') || 'production';
+}
+
 function getWebUrl(): string {
   const config = vscode.workspace.getConfiguration('rampify');
-  const environment = config.get<Environment>('environment') || 'production';
 
-  switch (environment) {
+  switch (getEnvironment()) {
     case 'production':
       return 'https://www.rampify.dev';
     case 'staging':
@@ -223,6 +266,28 @@ function getWebUrl(): string {
     case 'local':
       return config.get<string>('localApiUrl') || 'http://localhost:3000';
   }
+}
+
+/**
+ * Product signup (/free — /signup is the On-Rampify coaching application).
+ * rid=AhID is the "Partner / Vscode-extension" campaign's tracked link to /free;
+ * the UTMs mirror that campaign's source/medium so the visit isn't Direct
+ * (editor-launched browsers send no referrer), and utm_content splits editors.
+ */
+function getSignupUrl(): string {
+  const url = new URL('/free', getWebUrl());
+  url.searchParams.set('rid', 'AhID');
+  url.searchParams.set('utm_source', 'vscode-extension');
+  url.searchParams.set('utm_medium', 'sidebar');
+  url.searchParams.set('utm_content', getEditorSlug());
+  return url.toString();
+}
+
+/** Lowercase slug of the host editor ("vscode", "cursor", "windsurf", ...). */
+function getEditorSlug(): string {
+  const appName = vscode.env.appName.toLowerCase();
+  if (appName.includes('visual studio code')) { return 'vscode'; }
+  return appName.replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'unknown';
 }
 
 async function setApiKey(): Promise<void> {
@@ -244,15 +309,24 @@ async function setApiKey(): Promise<void> {
   if (apiKey) {
     const config = vscode.workspace.getConfiguration('rampify');
     await config.update('apiKey', apiKey, vscode.ConfigurationTarget.Global);
+    updateOnboardingContext();
 
-    // Test connection
-    const testClient = createApiClient();
-    const isConnected = await testClient.testConnection();
-
-    if (isConnected) {
-      vscode.window.showInformationMessage('Rampify API key saved successfully');
+    const check = await createApiClient().validateApiKey();
+    if (check === 'valid') {
+      vscode.window.showInformationMessage('Rampify API key saved and verified.');
+    } else if (check === 'invalid') {
+      vscode.window.showErrorMessage(
+        'Rampify rejected this API key. Check that you copied the whole key, or create a new one.',
+        'Create API Key'
+      ).then(action => {
+        if (action === 'Create API Key') {
+          vscode.env.openExternal(vscode.Uri.parse(`${getWebUrl()}/settings/api-keys`));
+        }
+      });
     } else {
-      vscode.window.showErrorMessage('Failed to connect to Rampify API. Please check your API key.');
+      vscode.window.showWarningMessage(
+        "API key saved, but Rampify couldn't be reached to verify it. Check your connection and try again."
+      );
     }
   }
 }
@@ -339,6 +413,7 @@ async function setupProjectLink(): Promise<void> {
   }
 
   let selectedClient: Client | undefined;
+  let createdNew = false;
 
   if (action.value === 'select') {
     // Fetch projects
@@ -363,15 +438,17 @@ async function setupProjectLink(): Promise<void> {
     }
 
     // Show project picker (sorted alphabetically)
+    const items = clients.map(client => {
+      const project = primaryProject(client);
+      return {
+        label: projectDisplayName(client),
+        description: project?.domain || undefined,
+        detail: client.status === 'active' ? '✓ Active' : client.status,
+        client
+      };
+    });
     const selectedItem = await vscode.window.showQuickPick(
-      clients
-        .sort((a, b) => a.company_name.localeCompare(b.company_name))
-        .map(client => ({
-          label: client.company_name,
-          description: client.domain || undefined,
-          detail: client.status === 'active' ? '✓ Active' : client.status,
-          client
-        })),
+      items.sort((a, b) => a.label.localeCompare(b.label)),
       {
         placeHolder: 'Select a project',
         matchOnDescription: true,
@@ -381,40 +458,48 @@ async function setupProjectLink(): Promise<void> {
 
     selectedClient = selectedItem?.client;
   } else {
-    // Create new project
+    // Check the plan's project allowance before asking for a name, so a
+    // founder at the limit gets the upgrade prompt instead of a dead end.
+    const quota = await apiClient.getProjectQuota();
+    if (quota && quota.allowed === false) {
+      await showCannotCreateProject(quota);
+      return;
+    }
+
+    // Name only, like the dashboard's New Project modal; the setup wizard
+    // collects the domain and project type next.
     const projectName = await vscode.window.showInputBox({
-      prompt: 'Enter project name',
-      placeHolder: 'My Awesome App',
-      validateInput: (value) => value ? null : 'Project name is required'
+      prompt: 'Name your project',
+      placeHolder: 'e.g. Acme marketing site',
+      validateInput: (value) => value.trim() ? null : 'Project name is required'
     });
 
     if (!projectName) {
       return;
     }
 
-    // Domain is optional — pre-fill with auto-detected value if available
-    const domain = await vscode.window.showInputBox({
-      prompt: 'Enter domain (optional — required for SEO tracking)',
-      value: detectedDomain || '',
-      placeHolder: 'example.com'
-    });
-
-    // Create project
-    selectedClient = await vscode.window.withProgress(
+    const result = await vscode.window.withProgress(
       {
         location: vscode.ProgressLocation.Notification,
         title: 'Creating project...',
         cancellable: false
       },
-      async () => {
-        return await apiClient.createClient({
-          companyName: projectName,
-          domain: domain || undefined
-        });
-      }
+      async () => apiClient.createClient({ projectName: projectName.trim() })
     );
 
-    vscode.window.showInformationMessage(`Created project: ${projectName}`);
+    if (!result.ok) {
+      if (result.reason === 'limit') {
+        await showCannotCreateProject(result.quota, result.message);
+      } else if (result.reason === 'scoped_key') {
+        await showCannotCreateProject({ reason: 'scoped_key' });
+      } else {
+        vscode.window.showErrorMessage(`Rampify: ${result.message}`);
+      }
+      return;
+    }
+
+    selectedClient = result.client;
+    createdNew = true;
   }
 
   if (selectedClient) {
@@ -422,8 +507,9 @@ async function setupProjectLink(): Promise<void> {
     try {
       await saveProjectConfig({
         clientId: selectedClient.id,
-        domain: selectedClient.domain
+        domain: primaryProject(selectedClient)?.domain ?? ''
       });
+      updateOnboardingContext();
     } catch (err) {
       vscode.window.showErrorMessage(
         err instanceof Error ? err.message : 'Failed to save project config.'
@@ -431,40 +517,124 @@ async function setupProjectLink(): Promise<void> {
       return;
     }
 
+    featureSpecsProvider.refresh();
+
+    if (createdNew) {
+      // New projects finish in the dashboard's setup wizard (project type,
+      // starting point, domain), same as projects created there.
+      const setupUrl = `${getWebUrl()}/clients/${selectedClient.id}/setup`;
+      vscode.env.openExternal(vscode.Uri.parse(setupUrl));
+      vscode.window.showInformationMessage(
+        `Created and linked "${projectDisplayName(selectedClient)}". Finish setup in your browser.`,
+        'Reopen Setup'
+      ).then(result => {
+        if (result === 'Reopen Setup') {
+          vscode.env.openExternal(vscode.Uri.parse(setupUrl));
+        }
+      });
+      return;
+    }
+
     vscode.window.showInformationMessage(
-      `Linked to project: ${selectedClient.company_name}`,
+      `Linked to project: ${projectDisplayName(selectedClient)}`,
       'View Feature Specs'
     ).then(result => {
       if (result === 'View Feature Specs') {
-        featureSpecsProvider.refresh();
         vscode.commands.executeCommand('rampify.featureSpecs.focus');
       }
     });
   }
 }
 
+function primaryProject(client: Client): ClientProject | null {
+  const p = client.projects;
+  return (Array.isArray(p) ? p[0] : p) ?? null;
+}
+
+/** Same fallback order as the dashboard (lib/db/project-display-name.ts). */
+function projectDisplayName(client: Client): string {
+  const project = primaryProject(client);
+  return (
+    project?.name ||
+    project?.brand_name ||
+    project?.domain ||
+    client.company_name ||
+    'Untitled project'
+  );
+}
+
+/**
+ * Explain why a project can't be created and offer the way forward. At the
+ * plan limit the server names the next plan (Free → Starter checkout, Starter
+ * → Pro request); without it, the dashboard's Add Project button shows the
+ * same upgrade dialog.
+ */
+async function showCannotCreateProject(quota: ProjectQuota, serverMessage?: string): Promise<void> {
+  if (quota.reason === 'scoped_key') {
+    const action = await vscode.window.showWarningMessage(
+      "This API key is limited to one project, so it can't create new ones. Create the project in the dashboard, or connect with an account API key.",
+      'Open Dashboard'
+    );
+    if (action === 'Open Dashboard') {
+      vscode.env.openExternal(vscode.Uri.parse(`${getWebUrl()}/dashboard`));
+    }
+    return;
+  }
+  if (quota.reason === 'viewer') {
+    vscode.window.showWarningMessage(
+      'Your account has view access only, so it can\u2019t create projects. Ask the workspace owner, or link one of your existing projects.'
+    );
+    return;
+  }
+
+  const plan = quota.tier_label ? `the ${quota.tier_label} plan` : 'your plan';
+  const usage = typeof quota.limit === 'number' && typeof quota.current === 'number'
+    ? `You've used ${quota.current} of ${quota.limit} project${quota.limit === 1 ? '' : 's'} on ${plan}.`
+    : serverMessage || quota.message || "You've reached your plan's project limit.";
+
+  // Top tier (or an older server that doesn't say): no upgrade to offer.
+  const upgradeLabel = quota.upgrade?.label
+    ?? (quota.upgrade === null ? undefined : 'See Upgrade Options');
+  const nextStep = upgradeLabel
+    ? 'Upgrade to add another, or link one of your existing projects.'
+    : 'Email info@rampify.dev if you need more, or link one of your existing projects.';
+
+  const actions = [upgradeLabel, 'Link Existing Project'].filter((a): a is string => !!a);
+  const action = await vscode.window.showWarningMessage(`${usage} ${nextStep}`, ...actions);
+  if (action && action === upgradeLabel) {
+    const target = quota.upgrade?.url || '/dashboard';
+    const url = /^https?:\/\//.test(target) ? target : `${getWebUrl()}${target}`;
+    vscode.env.openExternal(vscode.Uri.parse(url));
+  } else if (action === 'Link Existing Project') {
+    vscode.commands.executeCommand('rampify.setupProject');
+  }
+}
+
 /**
  * Guide the user through installing the Rampify MCP server for their AI agent.
+ *
+ * Default installs use OAuth: the config holds only the server URL, and the
+ * agent signs in (and picks a project) on first connect, so nothing secret is
+ * written to disk. Same shapes as the dashboard's install buttons
+ * (lib/mcp-install/generators.ts). The server name stays lowercase "rampify"
+ * to match `rampify init` and the rules file's mcp__rampify__* tool names, and
+ * so re-running the wizard replaces an older entry instead of duplicating it.
  */
 async function installMcpServer(): Promise<void> {
-  const config = vscode.workspace.getConfiguration('rampify');
-  const apiKey = config.get<string>('apiKey') || '';
-
-  // Detect the current editor so we can surface the most relevant option first
   const appName = vscode.env.appName.toLowerCase();
   const isCursor = appName.includes('cursor');
   const isVSCode = appName.includes('visual studio code');
 
-  type McpOption = { label: string; description: string; value: string };
-  const allOptions: McpOption[] = [
+  type McpOption = { label: string; description: string; value: McpTarget };
+  const editorOptions: McpOption[] = [
     {
       label: '$(file-code) VS Code (GitHub Copilot)',
-      description: 'Write MCP config to .vscode/mcp.json — requires VS Code ≥ 1.99 + Copilot',
+      description: 'Add to .vscode/mcp.json, sign in on first connect',
       value: 'vscode',
     },
     {
       label: '$(file-code) Cursor',
-      description: 'Write MCP config to .cursor/mcp.json in this project',
+      description: 'Add to .cursor/mcp.json, sign in on first connect',
       value: 'cursor',
     },
     {
@@ -472,78 +642,158 @@ async function installMcpServer(): Promise<void> {
       description: 'Pre-fill the claude mcp add command in a terminal',
       value: 'claude-code',
     },
+  ];
+  const otherOptions: McpOption[] = [
     {
       label: '$(copy) Copy Config JSON',
-      description: 'Copy the MCP server config block to clipboard',
+      description: 'Server config for any MCP client that supports OAuth',
       value: 'copy',
+    },
+    {
+      label: '$(key) Copy Config JSON with API Key',
+      description: 'For CI and headless agents that can’t sign in. Keep it out of git.',
+      value: 'copy-api-key',
     },
   ];
 
   // Bubble the detected editor to the top so it's the default
-  const sorted = isVSCode
-    ? allOptions
-    : isCursor
-      ? [allOptions[1], allOptions[0], allOptions[2], allOptions[3]]
-      : [allOptions[2], allOptions[0], allOptions[1], allOptions[3]];
+  const preferred = isVSCode ? 'vscode' : isCursor ? 'cursor' : 'claude-code';
+  const sorted = [
+    ...editorOptions.filter(o => o.value === preferred),
+    ...editorOptions.filter(o => o.value !== preferred),
+    ...otherOptions,
+  ];
 
   const choice = await vscode.window.showQuickPick(sorted, {
     placeHolder: 'Which AI agent are you using?',
   });
-
   if (!choice) { return; }
 
-  // Try to get project ID from workspace config; prompt if not found
-  let projectId = getProjectConfig()?.clientId || '';
-  if (!projectId) {
-    const entered = await vscode.window.showInputBox({
-      prompt: 'Enter your Rampify Project ID (Client ID from the dashboard URL)',
-      placeHolder: 'e.g. 5ac5b257-c5a7-4bf8-8471-76d821cddd5d',
-      validateInput: v => (v && v.trim().length > 0) ? null : 'Project ID is required for create_feature_spec to work',
-    });
-    projectId = entered?.trim() || '';
-  }
-
-  const envArg = (apiKey ? ` --env "RAMPIFY_API_KEY=${apiKey}"` : '') +
-    (projectId ? ` --env "RAMPIFY_PROJECT_ID=${projectId}"` : '');
-  const serverEntry = {
-    type: 'stdio',
-    command: 'npx',
-    args: ['-y', '@rampify/mcp-server@latest'],
-    env: {
-      RAMPIFY_API_KEY: apiKey || 'your-api-key',
-      ...(projectId ? { RAMPIFY_PROJECT_ID: projectId } : {}),
-    },
-  };
+  const mcpUrl = getMcpUrl();
 
   if (choice.value === 'vscode') {
-    await installMcpForVSCode(serverEntry);
+    // VS Code uses "servers" (not "mcpServers") and needs an explicit type.
+    await writeMcpConfig('.vscode', 'servers', { type: 'http', url: mcpUrl },
+      'Rampify added to .vscode/mcp.json. Start it from the MCP view and sign in when prompted.');
   } else if (choice.value === 'cursor') {
-    await installMcpForCursor(serverEntry);
+    await writeMcpConfig('.cursor', 'mcpServers', { url: mcpUrl },
+      'Rampify added to .cursor/mcp.json. Enable it in Cursor Settings → MCP and sign in when prompted.');
   } else if (choice.value === 'claude-code') {
-    const cmd = `claude mcp add rampify${envArg} -- npx -y @rampify/mcp-server@latest`;
     const terminal = vscode.window.createTerminal('Rampify MCP Setup');
     terminal.show();
     // sendText with false = type but don't execute, letting the user review first
-    terminal.sendText(cmd, false);
+    terminal.sendText(`claude mcp add --transport http ${MCP_SERVER_NAME} ${mcpUrl}`, false);
     vscode.window.showInformationMessage(
-      'Command ready — press Enter in the terminal to install.',
+      'Command ready. Press Enter in the terminal, then run /mcp in Claude Code to sign in.',
       'View Docs'
     ).then(action => {
       if (action === 'View Docs') {
-        vscode.env.openExternal(vscode.Uri.parse('https://github.com/rampify-dev/rampify-mcp#readme'));
+        vscode.env.openExternal(vscode.Uri.parse(MCP_SETUP_DOCS_URL));
       }
     });
+    await scaffoldClaudeRulesFile();
+  } else if (choice.value === 'copy') {
+    const config = { mcpServers: { [MCP_SERVER_NAME]: { type: 'http', url: mcpUrl } } };
+    await vscode.env.clipboard.writeText(JSON.stringify(config, null, 2));
+    vscode.window.showInformationMessage('MCP server config copied to clipboard.');
   } else {
-    const copyConfig = { mcpServers: { rampify: serverEntry } };
-    await vscode.env.clipboard.writeText(JSON.stringify(copyConfig, null, 2));
-    vscode.window.showInformationMessage('MCP server config copied to clipboard!');
+    await copyApiKeyConfig(mcpUrl);
   }
-
-  // Scaffold .claude/rules/rampify.md for Claude Code workflow guidance
-  await scaffoldClaudeRulesFile();
 }
 
-/** Scaffold .claude/rules/rampify.md in the workspace for Claude Code workflow guidance. */
+type McpTarget = 'vscode' | 'cursor' | 'claude-code' | 'copy' | 'copy-api-key';
+
+const MCP_SERVER_NAME = 'rampify';
+const MCP_SETUP_DOCS_URL = 'https://www.rampify.dev/docs/mcp/connecting';
+
+function getMcpUrl(): string {
+  return `${getWebUrl()}/api/mcp`;
+}
+
+/**
+ * Headless path: a config block with the API key in an Authorization header.
+ * Clipboard only, never written into the workspace, since it's a secret.
+ */
+async function copyApiKeyConfig(mcpUrl: string): Promise<void> {
+  const apiKey = vscode.workspace.getConfiguration('rampify').get<string>('apiKey') || '';
+  if (!apiKey) {
+    const action = await vscode.window.showErrorMessage(
+      'Set your Rampify API key first.',
+      'Set API Key'
+    );
+    if (action === 'Set API Key') { await setApiKey(); }
+    return;
+  }
+
+  // Account keys can reach every project, so pin the linked one. Project-scoped
+  // keys ignore this header (the key's own project wins).
+  const projectId = getProjectConfig()?.clientId;
+  const headers: Record<string, string> = {
+    'Authorization': `Bearer ${apiKey}`,
+    ...(projectId ? { 'X-Rampify-Project': projectId } : {}),
+  };
+  const config = { mcpServers: { [MCP_SERVER_NAME]: { type: 'http', url: mcpUrl, headers } } };
+  await vscode.env.clipboard.writeText(JSON.stringify(config, null, 2));
+  vscode.window.showWarningMessage(
+    'Config with your API key copied. It’s a secret: don’t commit it, and prefer a project-scoped key (project Settings → API keys).'
+  );
+}
+
+/** Write (or merge) the Rampify entry into <dir>/mcp.json in the first workspace folder. */
+async function writeMcpConfig(
+  dirName: '.vscode' | '.cursor',
+  serversKey: 'servers' | 'mcpServers',
+  serverEntry: Record<string, unknown>,
+  successMessage: string
+): Promise<void> {
+  const fs = require('fs') as typeof import('fs');
+  const path = require('path') as typeof import('path');
+
+  const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+  if (!workspaceFolder) {
+    vscode.window.showErrorMessage(
+      'Open a project folder first, then add the MCP config.',
+      'Open Folder'
+    ).then(result => {
+      if (result === 'Open Folder') { vscode.commands.executeCommand('vscode.openFolder'); }
+    });
+    return;
+  }
+
+  const dir = path.join(workspaceFolder.uri.fsPath, dirName);
+  const mcpPath = path.join(dir, 'mcp.json');
+
+  let existing: Record<string, unknown> = {};
+  if (fs.existsSync(mcpPath)) {
+    try {
+      existing = JSON.parse(fs.readFileSync(mcpPath, 'utf8'));
+    } catch {
+      vscode.window.showErrorMessage(
+        `${dirName}/mcp.json isn't valid JSON, so it was left untouched. Fix or remove it and run this again.`
+      );
+      return;
+    }
+  }
+
+  const servers = { ...((existing[serversKey] as Record<string, unknown> | undefined) ?? {}) };
+  // Older versions of this wizard wrote an entry with the API key embedded.
+  // Overwriting it under the same name removes the key from the file.
+  servers[MCP_SERVER_NAME] = serverEntry;
+  existing[serversKey] = servers;
+
+  if (!fs.existsSync(dir)) { fs.mkdirSync(dir, { recursive: true }); }
+  fs.writeFileSync(mcpPath, JSON.stringify(existing, null, 2) + '\n', 'utf8');
+
+  const doc = await vscode.workspace.openTextDocument(mcpPath);
+  await vscode.window.showTextDocument(doc);
+  vscode.window.showInformationMessage(successMessage);
+}
+
+/**
+ * Scaffold .claude/rules/rampify.md for Claude Code. The text is the same
+ * template `rampify init` installs (bundled at build time), so the two never
+ * drift. Never overwrites an existing file.
+ */
 async function scaffoldClaudeRulesFile(): Promise<void> {
   const fs = require('fs') as typeof import('fs');
   const path = require('path') as typeof import('path');
@@ -553,102 +803,17 @@ async function scaffoldClaudeRulesFile(): Promise<void> {
 
   const rulesDir = path.join(workspaceFolder.uri.fsPath, '.claude', 'rules');
   const rulesFile = path.join(rulesDir, 'rampify.md');
-
-  // Don't overwrite if file already exists
   if (fs.existsSync(rulesFile)) { return; }
 
   fs.mkdirSync(rulesDir, { recursive: true });
-  fs.writeFileSync(rulesFile, `---
-description: Rampify SEO workflow and MCP tool guidance
----
-
-## Rampify SEO Tools
-
-This project uses Rampify MCP tools: \`crawl_site\` · \`get_issues\` · \`get_page_seo\` · \`generate_meta\` · \`generate_schema\` · \`create_feature_spec\` · \`get_feature_spec\`
-
-## Workflow
-
-1. Discuss the SEO task or issue
-2. Create a feature spec via \`create_feature_spec\` before implementing
-3. Wait for explicit approval before writing any code
-
-Do not skip ahead to implementation or use Plan mode as a substitute for the feature spec.
-`);
-}
-
-/** Write (or merge) the Rampify MCP entry into .vscode/mcp.json (VS Code ≥ 1.99 + Copilot). */
-async function installMcpForVSCode(serverEntry: Record<string, unknown>): Promise<void> {
-  const fs = require('fs') as typeof import('fs');
-  const path = require('path') as typeof import('path');
-
-  const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
-  if (!workspaceFolder) {
-    vscode.window.showErrorMessage(
-      'Open a project folder first, then add the VS Code MCP config.',
-      'Open Folder'
-    ).then(result => {
-      if (result === 'Open Folder') { vscode.commands.executeCommand('vscode.openFolder'); }
-    });
-    return;
-  }
-
-  const vscodeDir = path.join(workspaceFolder.uri.fsPath, '.vscode');
-  const mcpPath = path.join(vscodeDir, 'mcp.json');
-
-  // VS Code uses "servers" (not "mcpServers")
-  let existing: { servers?: Record<string, unknown> } = { servers: {} };
-  if (fs.existsSync(mcpPath)) {
-    try { existing = JSON.parse(fs.readFileSync(mcpPath, 'utf8')); } catch { /* overwrite */ }
-  }
-
-  if (!fs.existsSync(vscodeDir)) { fs.mkdirSync(vscodeDir, { recursive: true }); }
-
-  existing.servers = { ...(existing.servers ?? {}), rampify: serverEntry };
-  fs.writeFileSync(mcpPath, JSON.stringify(existing, null, 2), 'utf8');
-
-  const doc = await vscode.workspace.openTextDocument(mcpPath);
-  await vscode.window.showTextDocument(doc);
+  fs.writeFileSync(rulesFile, rulesTemplate);
 
   vscode.window.showInformationMessage(
-    'Rampify MCP server added to .vscode/mcp.json — reload the window to activate.',
-    'Reload Window'
+    'Added .claude/rules/rampify.md. Reference it from CLAUDE.md so Claude Code follows the spec workflow.',
+    'Open File'
   ).then(action => {
-    if (action === 'Reload Window') { vscode.commands.executeCommand('workbench.action.reloadWindow'); }
+    if (action === 'Open File') {
+      vscode.workspace.openTextDocument(rulesFile).then(doc => vscode.window.showTextDocument(doc));
+    }
   });
 }
-
-/** Write (or merge) the Rampify MCP entry into .cursor/mcp.json. */
-async function installMcpForCursor(serverEntry: Record<string, unknown>): Promise<void> {
-  const fs = require('fs') as typeof import('fs');
-  const path = require('path') as typeof import('path');
-
-  const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
-  if (!workspaceFolder) {
-    vscode.window.showErrorMessage(
-      'Open a project folder first, then add the Cursor MCP config.',
-      'Open Folder'
-    ).then(result => {
-      if (result === 'Open Folder') { vscode.commands.executeCommand('vscode.openFolder'); }
-    });
-    return;
-  }
-
-  const cursorDir = path.join(workspaceFolder.uri.fsPath, '.cursor');
-  const mcpPath = path.join(cursorDir, 'mcp.json');
-
-  let existing: { mcpServers?: Record<string, unknown> } = { mcpServers: {} };
-  if (fs.existsSync(mcpPath)) {
-    try { existing = JSON.parse(fs.readFileSync(mcpPath, 'utf8')); } catch { /* overwrite */ }
-  }
-
-  if (!fs.existsSync(cursorDir)) { fs.mkdirSync(cursorDir, { recursive: true }); }
-
-  existing.mcpServers = { ...(existing.mcpServers ?? {}), rampify: serverEntry };
-  fs.writeFileSync(mcpPath, JSON.stringify(existing, null, 2), 'utf8');
-
-  const doc = await vscode.workspace.openTextDocument(mcpPath);
-  await vscode.window.showTextDocument(doc);
-
-  vscode.window.showInformationMessage('Rampify MCP server added to .cursor/mcp.json — restart Cursor to activate.');
-}
-

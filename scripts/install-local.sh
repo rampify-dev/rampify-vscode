@@ -3,11 +3,12 @@
 
 set -e
 
-echo "📦 Building extension..."
-npm run compile
+cd "$(dirname "$0")/.."
+VERSION=$(node -p "require('./package.json').version")
+VSIX="rampify-${VERSION}.vsix"
 
-echo "📦 Packaging extension..."
-vsce package --allow-missing-repository
+echo "📦 Building and packaging extension..."
+npm run package
 
 echo "📦 Installing extension..."
 
@@ -29,12 +30,12 @@ else
   echo "   Cursor: Extensions panel (Cmd+Shift+X) → ⋯ menu → Install from VSIX"
   echo "   VS Code: same steps"
   echo ""
-  echo "   VSIX file: $(pwd)/rampify-0.1.0.vsix"
+  echo "   VSIX file: $(pwd)/${VSIX}"
   exit 0
 fi
 
 echo "   Using: $CODE_CMD"
-"$CODE_CMD" --install-extension rampify-*.vsix --force
+"$CODE_CMD" --install-extension "$VSIX" --force
 
 echo "✅ Extension installed! Reload your editor to activate."
 echo "   Run: Cmd+Shift+P → 'Developer: Reload Window'"

@@ -1,110 +1,97 @@
 # Rampify: Spec-Driven Development
 
-Spec-driven development platform with AI SEO intelligence. Define specs, AI builds to spec, verify with a scan.
+Rampify brings spec-driven development to AI coding tools. Instead of describing a feature in chat and hoping the result matches, you write a spec with acceptance criteria, tasks, and the files it touches, and any AI coding tool connected to Rampify can read it and build against it.
 
-Rampify brings spec-driven development to AI coding tools. Instead of describing features in chat and hoping for the best, you define structured specifications with acceptance criteria, affected files, and implementation tasks that any AI coding tool can query and execute against.
+Specs can come from you or from Rampify. Rampify scans your site for problems like missing canonical tags, broken schema markup, and weak meta descriptions, then files a spec for each one with the affected URLs and fix instructions. Discovery runs research sessions on how AI models see your category and turns what it finds into keyword clusters and content work. Your AI picks up the spec, makes the change, and the next scan confirms the fix.
 
-Specs can come from you, or from Rampify. Run a scan, and Rampify analyzes your site for issues like missing canonical tags, broken schema markup, and meta description problems, then creates specs automatically with affected URLs and fix instructions. Your AI picks up the spec and implements the fix. You scan again to verify.
+This extension puts those specs in your editor's sidebar and connects your AI coding tool to Rampify's MCP server in a couple of clicks.
 
-**Works with any AI coding tool.** Claude Code, Cursor, Copilot, Windsurf. Rampify is the structured layer underneath. Models come and go. Your specs persist.
+**Works in VS Code, Cursor, and other editors built on VS Code** (Windsurf, Antigravity and others install it from Open VSX). Rampify's MCP server works with Claude Code, Cursor, GitHub Copilot, and any MCP client that supports remote servers.
 
 ## How it works
 
 ```
-You define a spec (or Rampify creates one from a scan)
+You write a spec (or Rampify files one from a scan or a Discovery session)
     ↓
-AI queries the spec via MCP, knows what to build and which files to touch
+Your AI reads the spec over MCP: what to build, which files, how to verify
     ↓
-AI implements the change
+Your AI implements the change and links the commit back to the spec
     ↓
-You commit, and the commit links back to the spec
-    ↓
-Scan again to verify the fix
+The next scan confirms the fix
 ```
 
 ## Features
 
 ### Specs sidebar
 
-Browse all feature specs grouped by status (Planned, In Progress, Completed). Each spec shows priority, progress, and affected files. Click to open in the Rampify dashboard. Toggle resolved specs on/off to keep the sidebar focused.
+Your project's specs, grouped by status (Planned, In Progress) and sorted by priority. Hover for the summary, next action, and affected files, or click to open the spec in the Rampify dashboard. Completed, verified, and idea specs are hidden until you toggle them on, so the list stays on what's in flight.
 
-### Auto-generated specs from scans
+### Specs from scans and Discovery
 
-Rampify scans your site and creates specs for issues it finds, including missing structured data, broken meta tags, and canonical tag issues. Each spec includes affected URLs and fix instructions your AI can act on immediately.
+Rampify files specs for the issues its scans find (structured data, meta tags, canonical tags, indexing) with the affected URLs and fix instructions attached. Discovery research lands as keyword clusters and content specs your AI can act on.
 
 ### One-click AI context
 
-Copy a spec reference into Claude or Cursor with a single click. Your AI retrieves the full spec (title, description, acceptance criteria, tasks, affected files, tech stack) and implements against it.
+Copy a spec reference into your AI chat with one click. Your AI fetches the full spec (description, acceptance criteria, tasks, affected files) through the MCP server and works against it.
 
-### MCP server setup
+### MCP setup
 
-Set up the Rampify MCP server in one command. Built-in wizard supports Claude Code, Cursor, and Windsurf with automatic configuration. Once connected, your AI coding tools can query specs, run site scans, generate schema markup, and access SEO intelligence directly.
-
-### Commit tracking
-
-After committing a fix, link the commit SHA back to the spec for full traceability: code → commit → task → spec → requirement.
+**Rampify: Set Up MCP Server** adds Rampify to `.vscode/mcp.json` (GitHub Copilot in VS Code 1.99 or later), `.cursor/mcp.json` (Cursor), or Claude Code. Your AI tool signs in to Rampify the first time it connects, so no API key is written into your project and the config is safe to commit. For Claude Code it also adds `.claude/rules/rampify.md`, which teaches Claude the spec workflow. CI and headless agents can copy a config that uses an API key instead.
 
 ## Getting started
 
-### 1. Install the extension
+### 1. Create a free account
 
-Search "Rampify" in the Extensions panel, or install from the [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=rampify.rampify).
+Click **Create Free Account** in the Rampify sidebar, or sign up at [rampify.dev/free](https://www.rampify.dev/free). The free plan includes one project.
 
-### 2. Set your API key
+### 2. Connect the extension
 
-1. Open Command Palette (`Cmd+Shift+P`)
-2. Run **Rampify: Set API Key**
-3. Enter your key from [rampify.dev/settings/api-keys](https://www.rampify.dev/settings/api-keys)
+1. Create an API key in [Settings → API keys](https://www.rampify.dev/settings/api-keys)
+2. Click **Connect Account** in the Rampify sidebar (or run **Rampify: Set API Key**) and paste it
+
+The extension checks the key with Rampify before saving it.
 
 ### 3. Link your project
 
-1. Open Command Palette
-2. Run **Rampify: Setup Project Link**
-3. Select your project or create a new one
+Run **Rampify: Setup Project Link** and pick one of your projects. To start a new one, choose **Create New Project**: name it, and the extension opens Rampify's setup in your browser to finish. If your plan's project limit is reached, the extension tells you and offers the upgrade.
 
-### 4. Set up MCP (optional)
+### 4. Connect your AI coding tool
 
-1. Open Command Palette
-2. Run **Rampify: Set Up MCP Server**
-3. Select your editor, and the wizard handles the rest
-
-Now your AI coding tools can query specs, run scans, and generate fixes directly.
+Run **Rampify: Set Up MCP Server** and choose your tool. Once it's connected, your AI can read and update specs, run scans, and generate fixes.
 
 ## Commands
 
 | Command | Description |
 |---------|-------------|
-| **Setup Project Link** | Link this workspace to a Rampify project |
-| **Set API Key** | Configure your Rampify API key |
-| **Set Up MCP Server** | Install MCP server for Claude Code, Cursor, or Windsurf |
+| **Create Free Account** | Open Rampify's signup page |
+| **Set API Key** | Connect the extension to your Rampify account |
+| **Setup Project Link** | Link this folder to a Rampify project, or create one |
+| **Set Up MCP Server** | Connect GitHub Copilot, Cursor, Claude Code, or another MCP client |
 | **Refresh Feature Specs** | Re-fetch specs from Rampify |
-| **Toggle Resolved Specs** | Show/hide Completed, Verified, and Deprecated sections |
-| **Copy Feature Spec Reference** | Copy spec ID for pasting into AI chat |
-| **Open Feature Spec in Browser** | Open spec detail in the Rampify dashboard |
-| **Switch Environment** | Switch between production and local API |
+| **Show/Hide Resolved and Idea Specs** | Toggle the Completed, Verified, Deprecated, and Idea groups |
+| **Copy Feature Spec Reference** | Copy a spec reference for your AI chat |
+| **Open Feature Spec in Browser** | Open the spec in the Rampify dashboard |
+| **Disconnect** | Remove your API key and project link |
+| **Switch Environment** | Point the extension at production or a local Rampify server |
 
 ## Configuration
 
 | Setting | Description | Default |
 |---------|-------------|---------|
-| `rampify.apiKey` | Your Rampify API key | — |
+| `rampify.apiKey` | Your Rampify API key | Not set |
 | `rampify.environment` | API environment (`production` or `local`) | `production` |
 | `rampify.localApiUrl` | Local API URL for development | `http://localhost:3000` |
-| `rampify.clientId` | Project client ID (set via Setup Project Link) | — |
-| `rampify.domain` | Project domain (auto-detected) | — |
+| `rampify.clientId` | Linked project (set by Setup Project Link) | Not set |
+| `rampify.domain` | Linked project's domain (set by Setup Project Link) | Not set |
 
 ## Requirements
 
-- A free [Rampify](https://www.rampify.dev) account
-- Works in VS Code and Cursor
+- A [Rampify](https://www.rampify.dev/free) account (free plan available)
+- VS Code 1.85 or later, or an editor built on it
 
 ## Links
 
-- [Rampify Dashboard](https://www.rampify.dev)
-- [Documentation](https://www.rampify.dev/docs)
-- [GitHub](https://github.com/rampify-dev/rampify)
-- [Issues](https://github.com/rampify-dev/rampify/issues)
-
-## License
-
-MIT
+- [Rampify](https://www.rampify.dev)
+- [Extension docs](https://www.rampify.dev/docs/integrations/vscode-extension)
+- [Connecting your AI tool over MCP](https://www.rampify.dev/docs/mcp/connecting)
+- [Issues](https://github.com/rampify-dev/rampify-vscode/issues)
