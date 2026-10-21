@@ -26,11 +26,11 @@ The next scan confirms the fix
 
 ### Home panel
 
-Before you're set up, the Rampify sidebar explains what Rampify does and signs you in. Once you're signed in it becomes a short checklist you finish right in the sidebar: name your project, say whether it's a website or an app and whether the site is live, then scan it, connect Google Search Console, connect your AI tool, and write your first spec. The steps adapt to your answers (no scan for a site that isn't live yet, no site questions for an app), and every step can be skipped for now. When your first spec arrives, the sidebar switches to your specs; **Show specs** and **Show Setup Checklist** switch between the two any time.
+Before you're set up, the Rampify sidebar explains what Rampify does and signs you in. Once you're signed in it becomes a short checklist you finish right in the sidebar: name your project, say whether it's a website or an app and whether the site is live, then scan it, connect Google Search Console, connect your AI tool, and start your first spec. The steps adapt to your answers (no scan for a site that isn't live yet, no site questions for an app), and every step can be skipped for now. Once setup is done, the sidebar switches to your specs; the buttons in its title bar switch between your specs and the checklist any time, and its **⋯** menu has the dashboard, rename, switch project, MCP setup, docs, and sign out.
 
 ### Specs sidebar
 
-Your project's specs, grouped by status (Planned, In Progress) and sorted by priority. Hover for the summary, next action, and affected files, or click to open the spec in the Rampify dashboard. Completed, verified, and idea specs are hidden until you toggle them on, so the list stays on what's in flight.
+Your project's specs, grouped by status (Planned, In Progress) and sorted by priority. Once a site scan has filed specs, the list splits into **Your specs** and **From your site scan**, so your own work doesn't get buried. Hover for the summary, next action, and affected files, or click to open the spec in the Rampify dashboard. Completed, verified, and idea specs are hidden until you toggle them on, so the list stays on what's in flight.
 
 ### Specs from scans and Discovery
 
@@ -40,25 +40,31 @@ Rampify files specs for the issues its scans find (structured data, meta tags, c
 
 Copy a spec reference into your AI chat with one click. Your AI fetches the full spec (description, acceptance criteria, tasks, affected files) through the MCP server and works against it.
 
-### MCP setup
+### Connecting your AI tool
 
-**Rampify: Set Up MCP Server** adds Rampify to `.vscode/mcp.json` (GitHub Copilot in VS Code 1.99 or later), `.cursor/mcp.json` (Cursor), or Claude Code. Your AI tool signs in to Rampify the first time it connects, so no API key is written into your project and the config is safe to commit. For Claude Code it also adds `.claude/rules/rampify.md`, which teaches Claude the spec workflow. CI and headless agents can copy a config that uses an API key instead.
+One click in the checklist (or **Rampify: Set Up MCP** from the ⋯ menu) connects your AI tool to Rampify for this folder:
+
+- **GitHub Copilot in VS Code** (1.101 or later): connected directly, with no config file. VS Code asks you to sign in to Rampify the first time Copilot uses it.
+- **Cursor:** added to `.cursor/mcp.json`. Cursor asks to enable it, then you sign in.
+- **Claude Code:** added to `.mcp.json`. Open Claude Code in the folder and type `/mcp` to sign in. It also adds `.claude/rules/rampify.md`, which teaches Claude the spec workflow.
+
+**One folder, one project.** Each config is pinned to the folder's Rampify project, so your AI tool can't end up working on a different project than the folder. If it signs in to the wrong one, Rampify tells it to reconnect. The configs hold no secrets and are safe to commit. CI and headless agents can copy a config that uses an API key instead.
 
 ## Getting started
 
 ### 1. Sign in
 
-Open the Rampify sidebar and click **Sign in with Rampify**. Your browser opens Rampify: continue with GitHub, Google, or an email code (this signs you in, or creates your free account if you're new), then pick the project this folder belongs to, or name a new one. You're sent back to the editor with the folder linked. No API key to copy.
+Open your project folder, then click **Sign in with Rampify** in the Rampify sidebar. (No folder open? The sidebar opens one first, or **Start a new project** in an empty folder, and carries on signing in.) Your browser opens Rampify: continue with GitHub, Google, or an email code (this signs you in, or creates your free account if you're new). You're sent back to the editor with the folder linked. No API key to copy, and you name the project in the sidebar.
 
 ### 2. Follow the checklist
 
 Everything happens in the sidebar:
 
-- **Your project**: its name, website or app, and whether your site is live (with its address). If you say it's live, Rampify checks that the site answers before saving.
+- **Your project**: its name (we suggest one from the folder name; rename it any time), website or app, and whether your site is live (with its address). If you say it's live, Rampify checks that the site answers before saving.
 - **Scan your site** (live sites): Rampify crawls it and turns what it finds into specs.
 - **Connect Google Search Console** (recommended once live, optional before launch): Google's sign-in opens in your browser, with a **Back to VS Code** button when you're done.
 - **Connect your AI tool** over MCP. This step completes once your AI tool actually connects.
-- **Your first spec**: type what you're building next and copy a ready-made prompt for your AI.
+- **Your first spec**: Rampify creates a getting-started spec and hands it to your AI. You watch the tasks check off in the sidebar as your AI maps the project (into a throwaway `.rampify/project-map.md`) and writes a spec for what you're working on. That spec gets a **Start Building** button.
 
 Any step can be skipped for now. The rest of Rampify's setup (business profile, launch stage) is optional and lives in the dashboard.
 
@@ -76,16 +82,18 @@ Prefer an API key? Choose **Use an API key** and paste a key from [Settings → 
 |---------|-------------|
 | **Sign In** | Sign in with Rampify in the browser and link this folder to a project |
 | **Sign In with a Code** | Sign in by confirming a short code at rampify.dev/activate (for remote or browser windows) |
-| **Switch Project** | Sign in again to link this folder to a different project |
+| **Switch Project** | Sign in again to link this folder to a different project (your AI tool configs follow) |
+| **Rename Project** | Rename the project in Rampify |
+| **Open Dashboard** / **Finish Setup in Dashboard** | Open the project in Rampify (business profile, launch stage and more) |
 | **Set API Key (instead of signing in)** | Use a pasted API key instead of signing in |
 | **Setup Project Link** | Link this folder to a project (with an API key), or sign in |
-| **Set Up MCP Server** | Connect GitHub Copilot, Cursor, Claude Code, or another MCP client |
+| **Set Up MCP** | Connect GitHub Copilot, Cursor, Claude Code, or another MCP client to this folder's project |
 | **Refresh Feature Specs** | Re-fetch specs from Rampify |
 | **Show Specs** / **Show Setup Checklist** | Switch the sidebar between your specs and the setup checklist |
 | **Show/Hide Resolved and Idea Specs** | Toggle the Completed, Verified, Deprecated, and Idea groups |
 | **Copy Feature Spec Reference** | Copy a spec reference for your AI chat |
 | **Open Feature Spec in Browser** | Open the spec in the Rampify dashboard |
-| **Disconnect** | Sign out of this folder's project and remove stored keys |
+| **Sign Out** | Sign out of this folder's project and remove stored keys |
 | **Switch Environment** | Point the extension at production or a local Rampify server |
 
 ## Configuration

@@ -16,15 +16,35 @@ import { Session } from './auth/session';
 import { RampifyOAuth, SignInCancelled } from './auth/oauth';
 import { SetupState } from './views/setup-state';
 import { HomeViewProvider } from './views/home-view';
+import {
+  AI_TOOL_LABELS,
+  CopilotMcpProvider,
+  PIN_HEADER,
+  SERVER_NAME,
+  chosenAiTool,
+  defaultAiTool,
+  rememberAiTool,
+  sendToAiTool,
+  syncPinnedConfigs,
+  writePinnedConfig,
+  type AiTool,
+} from './mcp/connect';
 
 let apiClient: RampifyApiClient;
 let featureSpecsProvider: FeatureSpecsTreeProvider;
 let session: Session;
 let oauth: RampifyOAuth;
 let setupState: SetupState;
+let copilotMcp: CopilotMcpProvider;
+let extContext: vscode.ExtensionContext;
+
+/** "Open your project folder, then sign in": survives the window reload. */
+const PENDING_SIGN_IN_KEY = 'rampify.pendingSignIn';
+const PENDING_SIGN_IN_TTL_MS = 10 * 60 * 1000;
 
 export async function activate(context: vscode.ExtensionContext) {
   console.log('Rampify extension is now active');
+  extContext = context;
 
   // Credentials live in SecretStorage, per linked project (see auth/session.ts).
   session = await Session.create(context.secrets, getProjectConfig()?.clientId);
@@ -49,6 +69,12 @@ export async function activate(context: vscode.ExtensionContext) {
   // Home panel: signed-out pitch + setup checklist, until the project has specs.
   setupState = new SetupState(() => apiClient, session, context.workspaceState);
   context.subscriptions.push(setupState);
+  // Copilot connects through VS Code's MCP provider API (no config file),
+  // pinned to this folder's project. Other tools get pinned in-folder files.
+  copilotMcp = new CopilotMcpProvider(context.workspaceState, getMcpUrl, () => getProjectConfig()?.clientId ?? null);
+  context.subscriptions.push(copilotMcp);
+  const linkedProject = getProjectConfig()?.clientId;
+  if (linkedProject) { syncPinnedConfigs(getMcpUrl(), linkedProject); }
   const homeView = new HomeViewProvider(setupState, getWebUrl, () => apiClient);
   context.subscriptions.push(homeView);
   context.subscriptions.push(vscode.window.registerWebviewViewProvider(HomeViewProvider.viewId, homeView));
@@ -146,6 +172,27 @@ export async function activate(context: vscode.ExtensionContext) {
       await setupState.showView('home');
       await vscode.commands.executeCommand('rampify.home.focus');
     })
+  );
+
+  // Title-bar ⋯ menu and Home panel actions (spec a3f4b733).
+  context.subscriptions.push(
+    vscode.commands.registerCommand('rampify.connectAiTool', (tool: AiTool) => connectAiTool(tool)),
+    vscode.commands.registerCommand('rampify.renameProject', () => renameProject()),
+    vscode.commands.registerCommand('rampify.openDashboard', () => {
+      const clientId = getProjectConfig()?.clientId;
+      vscode.env.openExternal(vscode.Uri.parse(clientId ? `${getWebUrl()}/clients/${clientId}/home` : `${getWebUrl()}/dashboard`));
+    }),
+    vscode.commands.registerCommand('rampify.finishSetupInDashboard', () => {
+      const clientId = getProjectConfig()?.clientId;
+      if (!clientId) { vscode.commands.executeCommand('rampify.home.focus'); return; }
+      // ?from= lets the dashboard offer "Back to <editor>".
+      vscode.env.openExternal(vscode.Uri.parse(
+        `${getWebUrl()}/clients/${clientId}/setup?from=${encodeURIComponent(vscode.env.uriScheme)}`
+      ));
+    }),
+    vscode.commands.registerCommand('rampify.openProjectFolder', (opts?: OpenFolderOptions) => openProjectFolder(opts ?? {})),
+    vscode.commands.registerCommand('rampify.startFirstSpec', (buildingFirst?: string) => startFirstSpec(buildingFirst)),
+    vscode.commands.registerCommand('rampify.startBuilding', (spec: { id: string; title: string }) => startBuilding(spec))
   );
 
   // Signing in again picks (or creates) another project for this folder.
@@ -298,9 +345,20 @@ export async function activate(context: vscode.ExtensionContext) {
   // Open docs
   context.subscriptions.push(
     vscode.commands.registerCommand('rampify.openDocs', () => {
-      vscode.env.openExternal(vscode.Uri.parse(MCP_SETUP_DOCS_URL));
+      vscode.env.openExternal(vscode.Uri.parse(`${getWebUrl()}/docs/integrations/vscode-extension`));
     })
   );
+
+  // Opened a folder from the Home panel's "Open Your Project Folder": the
+  // window reloaded, so pick the sign-in back up.
+  const pending = context.globalState.get<{ at: number; withCode?: boolean }>(PENDING_SIGN_IN_KEY);
+  if (pending) {
+    await context.globalState.update(PENDING_SIGN_IN_KEY, undefined);
+    const fresh = Date.now() - pending.at < PENDING_SIGN_IN_TTL_MS;
+    if (fresh && vscode.workspace.workspaceFolders?.length && !getProjectConfig()?.clientId) {
+      setTimeout(() => { void signInWithRampify({ withCode: pending.withCode }); }, 1000);
+    }
+  }
 
   // Set initial onboarding context keys
   updateOnboardingContext();
@@ -384,11 +442,8 @@ function getEditorSlug(): string {
  */
 async function signInWithRampify(opts: { withCode?: boolean } = {}): Promise<void> {
   if ((vscode.workspace.workspaceFolders?.length ?? 0) === 0) {
-    const action = await vscode.window.showWarningMessage(
-      'Open your project folder first, then sign in to link it to Rampify.',
-      'Open Folder'
-    );
-    if (action === 'Open Folder') { vscode.commands.executeCommand('vscode.openFolder'); }
+    // Each folder links to one project: open it first, then sign-in resumes.
+    await openProjectFolder({ thenSignIn: true, withCode: opts.withCode });
     return;
   }
 
@@ -437,6 +492,9 @@ async function signInWithRampify(opts: { withCode?: boolean } = {}): Promise<voi
 
   await session.storeProjectToken(workspace.id, result.accessToken);
   await saveProjectConfig({ clientId: workspace.id, domain: primaryProject(workspace)?.domain ?? '' });
+  // The folder's AI-tool configs follow the folder's project.
+  syncPinnedConfigs(getMcpUrl(), workspace.id);
+  copilotMcp.refresh();
   await session.setProject(workspace.id);
   updateOnboardingContext();
   featureSpecsProvider.refresh();
@@ -657,6 +715,8 @@ async function setupProjectLink(): Promise<void> {
         clientId: selectedClient.id,
         domain: primaryProject(selectedClient)?.domain ?? ''
       });
+      syncPinnedConfigs(getMcpUrl(), selectedClient.id);
+      copilotMcp.refresh();
       updateOnboardingContext();
     } catch (err) {
       vscode.window.showErrorMessage(
@@ -751,95 +811,184 @@ async function showCannotCreateProject(quota: ProjectQuota, serverMessage?: stri
  * to match `rampify init` and the rules file's mcp__rampify__* tool names, and
  * so re-running the wizard replaces an older entry instead of duplicating it.
  */
+const TOOL_PICK: Record<AiTool, { label: string; description: () => string }> = {
+  copilot: {
+    label: '$(copilot) GitHub Copilot (VS Code)',
+    description: () => copilotMcp.available ? 'Connect directly, sign in on first use' : 'Add to .vscode/mcp.json, sign in on first use',
+  },
+  cursor: { label: '$(file-code) Cursor', description: () => 'Add to .cursor/mcp.json, sign in on first use' },
+  claude: { label: '$(terminal) Claude Code', description: () => 'Add to .mcp.json, then /mcp in Claude Code to sign in' },
+};
+
+/** "Set Up MCP" (⋯ menu / palette): pick a tool, connect it to this folder's project. */
 async function installMcpServer(): Promise<void> {
-  const appName = vscode.env.appName.toLowerCase();
-  const isCursor = appName.includes('cursor');
-  const isVSCode = appName.includes('visual studio code');
-
-  type McpOption = { label: string; description: string; value: McpTarget };
-  const editorOptions: McpOption[] = [
-    {
-      label: '$(file-code) VS Code (GitHub Copilot)',
-      description: 'Add to .vscode/mcp.json, sign in on first connect',
-      value: 'vscode',
-    },
-    {
-      label: '$(file-code) Cursor',
-      description: 'Add to .cursor/mcp.json, sign in on first connect',
-      value: 'cursor',
-    },
-    {
-      label: '$(terminal) Claude Code',
-      description: 'Pre-fill the claude mcp add command in a terminal',
-      value: 'claude-code',
-    },
-  ];
-  const otherOptions: McpOption[] = [
-    {
-      label: '$(copy) Copy Config JSON',
-      description: 'Server config for any MCP client that supports OAuth',
-      value: 'copy',
-    },
-    {
-      label: '$(key) Copy Config JSON with API Key',
-      description: 'For CI and headless agents that can’t sign in. Keep it out of git.',
-      value: 'copy-api-key',
-    },
-  ];
-
-  // Bubble the detected editor to the top so it's the default
-  const preferred = isVSCode ? 'vscode' : isCursor ? 'cursor' : 'claude-code';
-  const sorted = [
-    ...editorOptions.filter(o => o.value === preferred),
-    ...editorOptions.filter(o => o.value !== preferred),
-    ...otherOptions,
-  ];
-
-  const choice = await vscode.window.showQuickPick(sorted, {
-    placeHolder: 'Which AI agent are you using?',
-  });
+  type Opt = vscode.QuickPickItem & { value: AiTool | 'copy' | 'copy-api-key' };
+  const first = defaultAiTool();
+  const tools = (['copilot', 'cursor', 'claude'] as AiTool[])
+    .sort((a, b) => (a === first ? -1 : b === first ? 1 : 0))
+    .map((t): Opt => ({ label: TOOL_PICK[t].label, description: TOOL_PICK[t].description(), value: t }));
+  const choice = await vscode.window.showQuickPick<Opt>([
+    ...tools,
+    { label: '$(copy) Copy Config JSON', description: 'For any other MCP client that supports OAuth', value: 'copy' },
+    { label: '$(key) Copy Config JSON with API Key', description: 'For CI and headless agents that can\u2019t sign in. Keep it out of git.', value: 'copy-api-key' },
+  ], { placeHolder: 'Which AI tool do you use?' });
   if (!choice) { return; }
 
-  const mcpUrl = getMcpUrl();
-
-  let done = false;
-  if (choice.value === 'vscode') {
-    // VS Code uses "servers" (not "mcpServers") and needs an explicit type.
-    done = await writeMcpConfig('.vscode', 'servers', { type: 'http', url: mcpUrl },
-      'Rampify added to .vscode/mcp.json. Start it from the MCP view and sign in when prompted.');
-  } else if (choice.value === 'cursor') {
-    done = await writeMcpConfig('.cursor', 'mcpServers', { url: mcpUrl },
-      'Rampify added to .cursor/mcp.json. Enable it in Cursor Settings → MCP and sign in when prompted.');
-  } else if (choice.value === 'claude-code') {
-    const terminal = vscode.window.createTerminal('Rampify MCP Setup');
-    terminal.show();
-    // sendText with false = type but don't execute, letting the user review first
-    terminal.sendText(`claude mcp add --transport http ${MCP_SERVER_NAME} ${mcpUrl}`, false);
-    vscode.window.showInformationMessage(
-      'Command ready. Press Enter in the terminal, then run /mcp in Claude Code to sign in.',
-      'View Docs'
-    ).then(action => {
-      if (action === 'View Docs') {
-        vscode.env.openExternal(vscode.Uri.parse(MCP_SETUP_DOCS_URL));
-      }
-    });
-    await scaffoldClaudeRulesFile();
-    done = true;
-  } else if (choice.value === 'copy') {
-    const config = { mcpServers: { [MCP_SERVER_NAME]: { type: 'http', url: mcpUrl } } };
-    await vscode.env.clipboard.writeText(JSON.stringify(config, null, 2));
+  if (choice.value === 'copy') {
+    const pin = getProjectConfig()?.clientId;
+    const entry = { type: 'http', url: getMcpUrl(), ...(pin ? { headers: { [PIN_HEADER]: pin } } : {}) };
+    await vscode.env.clipboard.writeText(JSON.stringify({ mcpServers: { [SERVER_NAME]: entry } }, null, 2));
     vscode.window.showInformationMessage('MCP server config copied to clipboard.');
-    done = true;
+    await setupState.markMcpSetupDone();
+  } else if (choice.value === 'copy-api-key') {
+    if (await copyApiKeyConfig(getMcpUrl())) { await setupState.markMcpSetupDone(); }
   } else {
-    done = await copyApiKeyConfig(mcpUrl);
+    await connectAiTool(choice.value);
   }
-  if (done) { await setupState.markMcpSetupDone(); }
 }
 
-type McpTarget = 'vscode' | 'cursor' | 'claude-code' | 'copy' | 'copy-api-key';
+/**
+ * Connect an AI tool to Rampify, pinned to this folder's project: Copilot via
+ * VS Code's provider API (or .vscode/mcp.json), Cursor via .cursor/mcp.json,
+ * Claude Code via .mcp.json. Each signs in to Rampify on first use.
+ */
+async function connectAiTool(tool: AiTool): Promise<void> {
+  if (!vscode.workspace.workspaceFolders?.length) {
+    await openProjectFolder({});
+    return;
+  }
+  const pin = getProjectConfig()?.clientId;
+  if (!pin) {
+    const action = await vscode.window.showInformationMessage('Sign in and link this folder to a Rampify project first.', 'Sign In');
+    if (action === 'Sign In') { await signInWithRampify(); }
+    return;
+  }
 
-const MCP_SERVER_NAME = 'rampify';
-const MCP_SETUP_DOCS_URL = 'https://www.rampify.dev/docs/mcp/connecting';
+  try {
+    if (tool === 'copilot' && copilotMcp.available) {
+      await copilotMcp.enable();
+      vscode.window.showInformationMessage(
+        'Rampify is connected to Copilot for this folder. In Copilot Chat (Agent mode), VS Code asks you to sign in to Rampify the first time.',
+        'Open Copilot Chat'
+      ).then((action) => {
+        if (action) { vscode.commands.executeCommand('workbench.action.chat.open', { mode: 'agent' }); }
+      });
+    } else {
+      const file = writePinnedConfig(tool, getMcpUrl(), pin);
+      if (tool === 'claude') {
+        await scaffoldClaudeRulesFile();
+        vscode.window.showInformationMessage(
+          `Rampify added to ${file}. Open Claude Code in this folder and type /mcp to sign in.`,
+          'Open Claude Code'
+        ).then((action) => {
+          if (!action) { return; }
+          const terminal = vscode.window.createTerminal({ name: 'Claude Code', cwd: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath });
+          terminal.show();
+          terminal.sendText('claude', true);
+        });
+      } else {
+        vscode.window.showInformationMessage(tool === 'cursor'
+          ? `Rampify added to ${file}. Cursor asks to enable it; then sign in to Rampify when prompted.`
+          : `Rampify added to ${file}. Start it from the MCP view and sign in when VS Code asks.`);
+      }
+    }
+    await rememberAiTool(extContext.workspaceState, tool);
+    await setupState.markMcpSetupDone();
+  } catch (err) {
+    vscode.window.showErrorMessage(`Couldn't connect ${AI_TOOL_LABELS[tool]}: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
+interface OpenFolderOptions {
+  /** "Start a New Project": pick or create an empty folder. */
+  newProject?: boolean;
+  /** Continue to sign-in after the window reloads with the folder. */
+  thenSignIn?: boolean;
+  withCode?: boolean;
+}
+
+/** Open (or create) the project folder; optionally resume sign-in after the reload. */
+async function openProjectFolder(opts: OpenFolderOptions): Promise<void> {
+  const picked = await vscode.window.showOpenDialog({
+    canSelectFolders: true,
+    canSelectFiles: false,
+    canSelectMany: false,
+    openLabel: opts.newProject ? 'Use This Folder' : 'Open Folder',
+    title: opts.newProject ? 'Choose or create an empty folder for your new project' : 'Open your project folder',
+  });
+  if (!picked?.[0]) { return; }
+  if (opts.thenSignIn) {
+    await extContext.globalState.update(PENDING_SIGN_IN_KEY, { at: Date.now(), withCode: opts.withCode });
+  }
+  await vscode.commands.executeCommand('vscode.openFolder', picked[0]);
+}
+
+/** Rename the linked project in Rampify (synced everywhere). */
+async function renameProject(): Promise<void> {
+  const s = setupState.current;
+  if (!s.siteId) {
+    vscode.window.showInformationMessage('Link this folder to a Rampify project first.');
+    return;
+  }
+  const name = await vscode.window.showInputBox({
+    prompt: 'Rename your Rampify project',
+    value: s.project?.name ?? s.projectName ?? '',
+    validateInput: (v) => (!v.trim() ? 'Give it a name' : v.length > 100 ? 'Keep it under 100 characters' : null),
+  });
+  if (!name) { return; }
+  const result = await apiClient.updateProject(s.siteId, { name: name.trim() });
+  if (!result.ok) {
+    vscode.window.showErrorMessage(`Couldn't rename the project: ${result.message}`);
+    return;
+  }
+  await setupState.refresh();
+  featureSpecsProvider.refresh();
+  vscode.window.showInformationMessage(`Renamed to "${name.trim()}".`);
+}
+
+/**
+ * "Start your first spec": Rampify creates the getting-started spec (fixed
+ * template, instantly), then the user's AI tool is handed the prompt to work
+ * through it. When the AI writes `.rampify/project-map.md`, it opens.
+ */
+async function startFirstSpec(buildingFirst?: string): Promise<void> {
+  const siteId = setupState.current.siteId;
+  if (!siteId) { return; }
+  const res = await apiClient.startGettingStarted(siteId, buildingFirst);
+  if (!res) {
+    vscode.window.showErrorMessage('Couldn\u2019t create your first spec. Check your connection and try again.');
+    return;
+  }
+  await setupState.refresh();
+  watchProjectMap();
+  await sendToAiTool(chosenAiTool(extContext.workspaceState), res.prompt);
+}
+
+/** After the getting-started spec: hand the user's own new spec to their AI. */
+async function startBuilding(spec: { id: string; title: string }): Promise<void> {
+  const prompt = `Start building the Rampify spec "${spec.title}" (id ${spec.id}). Read it with get_feature_spec, work through its tasks, commit as you go, and link each commit to the spec with link_commit.`;
+  await sendToAiTool(chosenAiTool(extContext.workspaceState), prompt);
+  await setupState.showView('specs');
+  featureSpecsProvider.refresh();
+  await vscode.commands.executeCommand('rampify.featureSpecs.focus');
+}
+
+/** Open `.rampify/project-map.md` the first time the AI writes it (once). */
+function watchProjectMap(): void {
+  const folder = vscode.workspace.workspaceFolders?.[0];
+  if (!folder) { return; }
+  const watcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(folder, '.rampify/project-map.md'));
+  const stop = setTimeout(() => watcher.dispose(), 30 * 60 * 1000);
+  const open = (uri: vscode.Uri) => {
+    clearTimeout(stop);
+    watcher.dispose();
+    vscode.workspace.openTextDocument(uri).then((doc) => vscode.window.showTextDocument(doc, { preview: true, preserveFocus: true }));
+  };
+  watcher.onDidCreate(open);
+  watcher.onDidChange(open);
+  extContext.subscriptions.push(watcher);
+}
+
 
 function getMcpUrl(): string {
   return `${getWebUrl()}/api/mcp`;
@@ -867,62 +1016,11 @@ async function copyApiKeyConfig(mcpUrl: string): Promise<boolean> {
     'Authorization': `Bearer ${apiKey}`,
     ...(projectId ? { 'X-Rampify-Project': projectId } : {}),
   };
-  const config = { mcpServers: { [MCP_SERVER_NAME]: { type: 'http', url: mcpUrl, headers } } };
+  const config = { mcpServers: { [SERVER_NAME]: { type: 'http', url: mcpUrl, headers } } };
   await vscode.env.clipboard.writeText(JSON.stringify(config, null, 2));
   vscode.window.showWarningMessage(
     'Config with your API key copied. It’s a secret: don’t commit it, and prefer a project-scoped key (project Settings → API keys).'
   );
-  return true;
-}
-
-/** Write (or merge) the Rampify entry into <dir>/mcp.json in the first workspace folder. */
-async function writeMcpConfig(
-  dirName: '.vscode' | '.cursor',
-  serversKey: 'servers' | 'mcpServers',
-  serverEntry: Record<string, unknown>,
-  successMessage: string
-): Promise<boolean> {
-  const fs = require('fs') as typeof import('fs');
-  const path = require('path') as typeof import('path');
-
-  const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
-  if (!workspaceFolder) {
-    vscode.window.showErrorMessage(
-      'Open a project folder first, then add the MCP config.',
-      'Open Folder'
-    ).then(result => {
-      if (result === 'Open Folder') { vscode.commands.executeCommand('vscode.openFolder'); }
-    });
-    return false;
-  }
-
-  const dir = path.join(workspaceFolder.uri.fsPath, dirName);
-  const mcpPath = path.join(dir, 'mcp.json');
-
-  let existing: Record<string, unknown> = {};
-  if (fs.existsSync(mcpPath)) {
-    try {
-      existing = JSON.parse(fs.readFileSync(mcpPath, 'utf8'));
-    } catch {
-      vscode.window.showErrorMessage(
-        `${dirName}/mcp.json isn't valid JSON, so it was left untouched. Fix or remove it and run this again.`
-      );
-      return false;
-    }
-  }
-
-  const servers = { ...((existing[serversKey] as Record<string, unknown> | undefined) ?? {}) };
-  // Older versions of this wizard wrote an entry with the API key embedded.
-  // Overwriting it under the same name removes the key from the file.
-  servers[MCP_SERVER_NAME] = serverEntry;
-  existing[serversKey] = servers;
-
-  if (!fs.existsSync(dir)) { fs.mkdirSync(dir, { recursive: true }); }
-  fs.writeFileSync(mcpPath, JSON.stringify(existing, null, 2) + '\n', 'utf8');
-
-  const doc = await vscode.workspace.openTextDocument(mcpPath);
-  await vscode.window.showTextDocument(doc);
-  vscode.window.showInformationMessage(successMessage);
   return true;
 }
 

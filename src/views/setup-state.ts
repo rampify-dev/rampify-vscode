@@ -6,7 +6,9 @@ import { RampifyApiClient } from '../api/client';
 import { Session } from '../auth/session';
 import { getProjectConfig } from '../utils/project-config';
 import { projectDisplayName, primaryProject } from '../utils/project-display';
-import { projectAnswered, type ProjectType, type SidebarStep, type StartingPoint } from './setup-steps';
+import { execFile } from 'child_process';
+import { projectAnswered, sidebarSteps, stepDone, type ProjectType, type SidebarStep, type StartingPoint } from './setup-steps';
+import { AI_TOOL_LABELS, chosenAiTool, type AiTool } from '../mcp/connect';
 
 /**
  * What the Home panel shows: where this folder is in getting set up. Loaded
@@ -39,6 +41,19 @@ export interface SetupSnapshot {
    */
   aiToolConnected: boolean | null;
   specCount: number;
+  /** The getting-started spec (spec a3f4b733), once created. */
+  gettingStarted: { id: string; title: string; status: string; tasks: { id: string; title: string; status: string }[] } | null;
+  /** The spec the user's AI wrote from it ("what you're working on"). */
+  followUp: { id: string; title: string; status: string } | null;
+  /** The user's own specs (not the getting-started spec, not scan specs). */
+  userSpecCount: number;
+  /** Specs Rampify's site scans filed. */
+  scanSpecCount: number;
+  /** The folder has commits (null = couldn't tell). No commits → ask what they're building. */
+  hasCommits: boolean | null;
+  /** Where prompts go: the AI tool the user connected (or the editor's own). */
+  aiTool: AiTool;
+  aiToolLabel: string;
   /** Steps the user chose "Skip for now" on, for this folder's project. */
   skipped: SidebarStep[];
   /** Couldn't reach Rampify or the project. */
@@ -75,6 +90,11 @@ export class SetupState implements vscode.Disposable {
     return this.snapshot;
   }
 
+  /** This folder's extension state (per-workspace memento). */
+  get memento(): vscode.Memento {
+    return this.workspaceState;
+  }
+
   /** Skip a step for this folder's project, or bring it back. */
   async setSkipped(step: SidebarStep, skipped: boolean): Promise<void> {
     const key = `${SKIPPED_KEY}.${this.snapshot.clientId ?? 'none'}`;
@@ -94,9 +114,20 @@ export class SetupState implements vscode.Disposable {
     this.applyView();
   }
 
-  /** The view the sidebar is showing (an override, else specs once there are any). */
+  /**
+   * The view the sidebar is showing: the user's choice, else the specs list
+   * once setup is settled (every step done or skipped), or for people who
+   * already had their own specs before onboarding existed. Scan specs never
+   * switch it, so a scan mid-onboarding doesn't take over the sidebar.
+   */
   get currentView(): SidebarView {
-    return this.workspaceState.get<SidebarView>(VIEW_KEY) ?? (this.snapshot.specCount > 0 ? 'specs' : 'home');
+    const override = this.workspaceState.get<SidebarView>(VIEW_KEY);
+    if (override) { return override; }
+    const s = this.snapshot;
+    if (!s.signedIn || !s.clientId) { return 'home'; }
+    const ids = sidebarSteps(s.needsProjectSetup ? null : s.project?.type ?? null, s.needsProjectSetup ? null : s.project?.startingPoint ?? null);
+    const settled = ids.every((id) => stepDone(id, s) || s.skipped.includes(id));
+    return settled || (s.userSpecCount > 0 && !s.gettingStarted) ? 'specs' : 'home';
   }
 
   private applyView(): void {
@@ -128,6 +159,8 @@ export class SetupState implements vscode.Disposable {
     next.clientId = getProjectConfig()?.clientId ?? null;
     next.mcpConfigured = !!this.workspaceState.get<boolean>(MCP_DONE_KEY) || detectMcpConfig();
     next.skipped = this.workspaceState.get<SidebarStep[]>(`${SKIPPED_KEY}.${next.clientId ?? 'none'}`) ?? [];
+    next.aiTool = chosenAiTool(this.workspaceState);
+    next.aiToolLabel = AI_TOOL_LABELS[next.aiTool];
 
     if (next.signedIn && next.clientId) {
       const api = this.getApiClient();
@@ -152,6 +185,17 @@ export class SetupState implements vscode.Disposable {
           next.needsProjectSetup = !(site?.domain || (client && primaryProject(client)?.domain));
         }
         next.specCount = site ? await api.countFeatureSpecs(site.id) : 0;
+        const gs = site ? await api.getGettingStarted(site.id) : null;
+        if (gs) {
+          next.gettingStarted = gs.getting_started;
+          next.followUp = gs.follow_up;
+          next.userSpecCount = gs.user_spec_count;
+          next.scanSpecCount = gs.scan_spec_count;
+        } else {
+          // Older server: treat every spec as the user's.
+          next.userSpecCount = next.specCount;
+        }
+        next.hasCommits = await folderHasCommits();
         next.aiToolConnected = await api.getAiToolConnected();
         if (!client) {
           next.error = "This folder's project isn't available with your current sign-in.";
@@ -177,7 +221,22 @@ function emptySnapshot(): SetupSnapshot {
     projectName: null, folderName: null, project: null, needsProjectSetup: false,
     scan: 'none', gsc: { connected: false, hasProperty: false },
     mcpConfigured: false, aiToolConnected: null, specCount: 0, skipped: [], error: null,
+    gettingStarted: null, followUp: null, userSpecCount: 0, scanSpecCount: 0, hasCommits: null,
+    aiTool: 'copilot', aiToolLabel: AI_TOOL_LABELS.copilot,
   };
+}
+
+/** Whether the open folder's git repo has any commits (null: not a repo / no git). */
+function folderHasCommits(): Promise<boolean | null> {
+  const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  if (!cwd) { return Promise.resolve(null); }
+  return new Promise((resolve) => {
+    execFile('git', ['rev-parse', '--verify', '--quiet', 'HEAD'], { cwd, timeout: 3000 }, (err, stdout) => {
+      if (!err) { resolve(stdout.trim().length > 0); return; }
+      // Exit 1 with --quiet: a repo with no commits yet. Anything else: unknown.
+      resolve((err as unknown as { code?: number | string }).code === 1 ? false : null);
+    });
+  });
 }
 
 /**

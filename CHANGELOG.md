@@ -2,6 +2,19 @@
 
 All notable changes to the Rampify VS Code extension will be documented in this file.
 
+## [0.10.0] - 2026-10-21
+
+### Changed
+- **Name your project in the sidebar.** Signing in no longer asks for a project name in the browser; the sidebar suggests one from the folder name (selected, so typing replaces it) and you can rename it any time (**Rename Project**). A single-project account signs in without a project picker
+- **Connect your AI tool in one click**, with your editor's tool first: GitHub Copilot connects directly in VS Code (no config file), Cursor and Claude Code get a config in the folder. Every config is pinned to the folder's project, and Rampify refuses an AI tool signed in to a different project, with a message saying how to reconnect. **Switch Project** updates the pins
+- **Your first spec is a getting-started spec** your AI works through while you watch: it maps the project into a throwaway `.rampify/project-map.md`, then writes a spec for what you're working on, which gets a **Start Building** button. Empty folder with no commits? It asks what you're building first
+- Specs from a site scan don't complete your first spec or take over the sidebar, and the specs list splits into **Your specs** and **From your site scan**
+- The footer links moved to the sidebar's title bar and **⋯** menu (dashboard, rename, switch project, MCP setup, docs, sign out)
+- With no folder open, the sidebar leads with **Open Your Project Folder** (or **Start a new project**) and picks up signing in after the folder opens
+
+### Fixed
+- Buttons in the sidebar looked disabled (grey text) in some themes
+
 ## [0.9.0] - 2026-10-20
 
 ### Changed

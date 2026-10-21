@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import * as crypto from 'crypto';
 import { SetupState } from './setup-state';
-import { BUILD_PROMPT, renderHomeHtml, specPromptFor, STARTER_PROMPT, type HomeNotice } from './home-html';
+import { renderHomeHtml, type HomeNotice } from './home-html';
 import type { SidebarStep, StartingPoint } from './setup-steps';
 import type { ProjectUpdate, RampifyApiClient } from '../api/client';
 import { saveProjectConfig } from '../utils/project-config';
@@ -48,7 +48,7 @@ export class HomeViewProvider implements vscode.WebviewViewProvider, vscode.Disp
     private readonly getWebUrl: () => string,
     private readonly getApiClient: () => RampifyApiClient
   ) {
-    this.disposables.push(state.onDidChange(() => { this.render(); this.syncPolling(); }));
+    this.disposables.push(state.onDidChange(() => { this.render(); this.syncPolling(); this.announceFollowUp(); }));
   }
 
   resolveWebviewView(view: vscode.WebviewView): void {
@@ -86,7 +86,10 @@ export class HomeViewProvider implements vscode.WebviewViewProvider, vscode.Disp
   private syncPolling(): void {
     const s = this.state.current;
     const wanted = !!this.view?.visible && s.signedIn && !!s.clientId;
-    const ms = s.scan === 'running' ? 10_000 : 30_000;
+    // Fast while something is visibly happening: the AI working through the
+    // getting-started spec (tasks tick off), or a site scan.
+    const gsRunning = !!s.gettingStarted && !['completed', 'verified'].includes(s.gettingStarted.status);
+    const ms = gsRunning ? 5_000 : s.scan === 'running' ? 10_000 : 30_000;
     if (this.pollTimer && (!wanted || ms !== this.pollMs)) {
       clearInterval(this.pollTimer);
       this.pollTimer = undefined;
@@ -123,6 +126,17 @@ export class HomeViewProvider implements vscode.WebviewViewProvider, vscode.Disp
         break;
       case 'setupMcp':
         await vscode.commands.executeCommand('rampify.installMcpServer');
+        break;
+      case 'connectTool':
+        if (msg.arg) { await vscode.commands.executeCommand('rampify.connectAiTool', msg.arg); }
+        await this.state.refresh();
+        break;
+      case 'openFolderThenSignIn':
+      case 'newProjectThenSignIn':
+        await vscode.commands.executeCommand('rampify.openProjectFolder', {
+          thenSignIn: true,
+          newProject: msg.action === 'newProjectThenSignIn',
+        });
         break;
 
       case 'saveProject':
@@ -169,37 +183,52 @@ export class HomeViewProvider implements vscode.WebviewViewProvider, vscode.Disp
         vscode.env.openExternal(vscode.Uri.parse(SEARCH_CONSOLE_URL));
         break;
 
-      case 'copySpecPrompt': {
-        const what = (msg.arg ?? '').trim();
-        await vscode.env.clipboard.writeText(what ? specPromptFor(what) : BUILD_PROMPT);
-        vscode.window.showInformationMessage('Prompt copied. Paste it into your AI chat.');
+      case 'startFirstSpec':
+        this.busy = 'first_spec';
+        this.render();
+        try {
+          await vscode.commands.executeCommand('rampify.startFirstSpec', msg.arg ?? '');
+        } finally {
+          this.busy = null;
+          this.render();
+        }
+        break;
+      case 'startBuilding': {
+        const f = this.state.current.followUp;
+        if (f) { await vscode.commands.executeCommand('rampify.startBuilding', { id: f.id, title: f.title }); }
         break;
       }
-      case 'copyPrompt':
-        await vscode.env.clipboard.writeText(STARTER_PROMPT);
-        vscode.window.showInformationMessage('Prompt copied. Paste it into your AI chat.');
-        break;
       case 'showSpecs':
         await this.state.showView('specs');
         await vscode.commands.executeCommand('rampify.featureSpecs.focus');
         break;
 
       case 'openSetup':
-        // The rest of setup (business profile, launch stage) lives in the
-        // dashboard. ?from= lets it offer "Back to <editor>".
-        if (clientId) { vscode.env.openExternal(vscode.Uri.parse(`${web}/clients/${clientId}/setup?from=${from}`)); }
+        await vscode.commands.executeCommand('rampify.finishSetupInDashboard');
         break;
       case 'openDashboard':
-        vscode.env.openExternal(vscode.Uri.parse(clientId ? `${web}/clients/${clientId}/home` : `${web}/dashboard`));
+        await vscode.commands.executeCommand('rampify.openDashboard');
         break;
       case 'openDocs':
-        vscode.env.openExternal(vscode.Uri.parse(`${web}/docs/integrations/vscode-extension`));
+        await vscode.commands.executeCommand('rampify.openDocs');
         break;
       case 'refresh':
         await this.state.refresh();
         break;
     }
     this.syncPolling();
+  }
+
+  /** The spec the AI wrote from the getting-started spec has landed: say so, once. */
+  private announceFollowUp(): void {
+    const f = this.state.current.followUp;
+    const key = 'rampify.announcedFollowUp';
+    if (!f || !this.state.current.gettingStarted || this.state.memento.get<string>(key) === f.id) { return; }
+    void this.state.memento.update(key, f.id);
+    vscode.window.showInformationMessage(`Your spec is ready: "${f.title}"`, 'Start Building', 'Show Specs').then((action) => {
+      if (action === 'Start Building') { vscode.commands.executeCommand('rampify.startBuilding', { id: f.id, title: f.title }); }
+      if (action === 'Show Specs') { vscode.commands.executeCommand('rampify.showSpecs'); }
+    });
   }
 
   private async saveProject(d: ProjectFormData, opts: { verifyLive: boolean }): Promise<void> {

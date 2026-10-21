@@ -51,3 +51,44 @@ export function sidebarSteps(type: ProjectType | null, startingPoint: StartingPo
 export function projectAnswered(type: ProjectType | null, startingPoint: StartingPoint | null): boolean {
   return type === 'app' || !!startingPoint;
 }
+
+/** The parts of the sidebar's state the step rules read (see SetupSnapshot). */
+export interface StepInputs {
+  needsProjectSetup: boolean;
+  scan: 'none' | 'running' | 'done' | 'failed';
+  gsc: { connected: boolean; hasProperty: boolean };
+  aiToolConnected: boolean | null;
+  mcpConfigured: boolean;
+  gettingStarted: { status: string } | null;
+  userSpecCount: number;
+}
+
+const FINISHED = new Set(['completed', 'verified']);
+
+/**
+ * Whether a step is done. "Your first spec" counts only the user's own work,
+ * never specs a site scan filed: it's done when the getting-started spec is
+ * finished, or (for people who already had specs) when the project has a spec
+ * of their own and no getting-started spec.
+ */
+export function stepDone(id: SidebarStep, s: StepInputs): boolean {
+  switch (id) {
+    case 'project': return !s.needsProjectSetup;
+    case 'scan': return s.scan === 'done';
+    case 'gsc_recommended':
+    case 'gsc_optional': return s.gsc.connected && s.gsc.hasProperty;
+    case 'ai_tool': return s.aiToolConnected ?? s.mcpConfigured;
+    case 'first_spec':
+      return s.gettingStarted ? FINISHED.has(s.gettingStarted.status) : s.userSpecCount > 0;
+  }
+}
+
+/** "my-test_project" / "myTestProject" → "My Test Project". */
+export function tidyFolderName(folder: string): string {
+  return folder
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .split(/[-_.\s]+/)
+    .filter(Boolean)
+    .map((w) => w[0].toUpperCase() + w.slice(1))
+    .join(' ');
+}

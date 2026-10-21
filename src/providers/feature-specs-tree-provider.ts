@@ -3,7 +3,28 @@ import { RampifyApiClient } from '../api/client';
 import { FeatureSpec } from '../api/types';
 import { getProjectConfig } from '../utils/project-config';
 
-type TreeItem = StatusGroupTreeItem | FeatureSpecTreeItem | MessageTreeItem;
+type TreeItem = OriginGroupTreeItem | StatusGroupTreeItem | FeatureSpecTreeItem | MessageTreeItem;
+
+/**
+ * Where a spec came from: the user and their AI ('yours', including the
+ * getting-started spec), or Rampify's site scans. Kept apart so a scan during
+ * onboarding doesn't bury the user's own spec (spec a3f4b733).
+ */
+type Origin = 'yours' | 'scan';
+const SCAN_SOURCES = new Set(['seo_scan', 'security_scan', 'accessibility_scan']);
+const originOf = (spec: FeatureSpec): Origin => (SCAN_SOURCES.has(spec.source) ? 'scan' : 'yours');
+
+class OriginGroupTreeItem extends vscode.TreeItem {
+  constructor(public readonly origin: Origin, count: number) {
+    super(
+      origin === 'yours' ? 'Your specs' : 'From your site scan',
+      origin === 'yours' ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.Collapsed
+    );
+    this.contextValue = 'featureSpecOrigin';
+    this.iconPath = new vscode.ThemeIcon(origin === 'yours' ? 'account' : 'search');
+    this.description = `${count} spec${count !== 1 ? 's' : ''}`;
+  }
+}
 
 const STATUS_ORDER: FeatureSpec['status'][] = [
   'planned',
@@ -59,7 +80,9 @@ const TYPE_LABELS: Record<FeatureSpec['feature_type'], string> = {
 class StatusGroupTreeItem extends vscode.TreeItem {
   constructor(
     public readonly status: FeatureSpec['status'],
-    public readonly count: number
+    public readonly count: number,
+    /** Set when the list is split by origin. */
+    public readonly origin?: Origin
   ) {
     super(STATUS_LABELS[status], vscode.TreeItemCollapsibleState.Expanded);
     this.contextValue = 'featureSpecGroup';
@@ -210,19 +233,31 @@ export class FeatureSpecsTreeProvider implements vscode.TreeDataProvider<TreeIte
         return [];
       }
 
-      // Root: status groups
-      if (!element) {
-        const grouped = this.groupByStatus();
+      const visible = (status: FeatureSpec['status']) => this.showResolved || !HIDDEN_BY_DEFAULT.has(status);
+      const statusGroups = (origin?: Origin) => {
+        const grouped = this.groupByStatus(origin);
         return STATUS_ORDER
-          .filter(status => grouped.has(status))
-          .filter(status => this.showResolved || !HIDDEN_BY_DEFAULT.has(status))
-          .map(status => new StatusGroupTreeItem(status, grouped.get(status)!.length));
+          .filter(status => grouped.has(status) && visible(status))
+          .map(status => new StatusGroupTreeItem(status, grouped.get(status)!.length, origin));
+      };
+      const hasScanSpecs = this.specs.some(s => originOf(s) === 'scan');
+
+      // Root: split by origin once a scan has filed specs; otherwise status groups.
+      if (!element) {
+        if (!hasScanSpecs) { return statusGroups(); }
+        return (['yours', 'scan'] as Origin[])
+          .map(origin => ({ origin, count: this.specs.filter(s => originOf(s) === origin && visible(s.status)).length }))
+          .filter(g => g.count > 0)
+          .map(g => new OriginGroupTreeItem(g.origin, g.count));
+      }
+
+      if (element instanceof OriginGroupTreeItem) {
+        return statusGroups(element.origin);
       }
 
       // Status group: list specs
       if (element instanceof StatusGroupTreeItem) {
-        const grouped = this.groupByStatus();
-        const specs = grouped.get(element.status) || [];
+        const specs = this.groupByStatus(element.origin).get(element.status) || [];
 
         // Sort: critical → high → normal → low
         const priorityOrder: Record<FeatureSpec['priority'], number> = {
@@ -256,9 +291,10 @@ export class FeatureSpecsTreeProvider implements vscode.TreeDataProvider<TreeIte
     this.lastLoadedAt = Date.now();
   }
 
-  private groupByStatus(): Map<FeatureSpec['status'], FeatureSpec[]> {
+  private groupByStatus(origin?: Origin): Map<FeatureSpec['status'], FeatureSpec[]> {
     const map = new Map<FeatureSpec['status'], FeatureSpec[]>();
     for (const spec of this.specs) {
+      if (origin && originOf(spec) !== origin) { continue; }
       const existing = map.get(spec.status) || [];
       map.set(spec.status, [...existing, spec]);
     }

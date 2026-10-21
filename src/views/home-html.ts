@@ -1,23 +1,11 @@
 import type { SetupSnapshot } from './setup-state';
-import { sidebarSteps, type SidebarStep } from './setup-steps';
+import { sidebarSteps, stepDone, tidyFolderName, type SidebarStep } from './setup-steps';
 
 /**
  * HTML for the Home panel. Pure (no vscode import) so it can be rendered and
  * screenshotted outside the editor. Colors come from the editor theme's CSS
  * variables; the accent matches rampify.dev's brand blue.
  */
-
-export const STARTER_PROMPT =
-  'Use Rampify to scan my site and create specs for the most important issues you find.';
-
-/** First-spec prompt when there's no live site to scan (or nothing typed in the box). */
-export const BUILD_PROMPT =
-  'Use Rampify to write a spec for the next feature I\u2019m building in this project.';
-
-/** "Use Rampify to write a spec for: <what they typed>". */
-export function specPromptFor(what: string): string {
-  return `Use Rampify to write a spec for: ${what.trim()}`;
-}
 
 /** Transient panel state the provider holds between renders. */
 export type HomeNotice =
@@ -37,7 +25,7 @@ export interface HomeHtmlOptions {
 
 export function renderHomeHtml(s: SetupSnapshot, o: HomeHtmlOptions): string {
   const body = !s.signedIn
-    ? signedOut()
+    ? signedOut(s.hasFolder)
     : !s.hasFolder
       ? noFolder()
       : !s.clientId
@@ -60,7 +48,16 @@ ${body}
 </html>`;
 }
 
-function signedOut(): string {
+function signedOut(hasFolder: boolean): string {
+  // Each folder links to one Rampify project, so with no folder open the
+  // first step is opening one; sign-in picks up after the window reloads.
+  const actions = hasFolder
+    ? `<button class="btn" data-action="signIn">Sign in with Rampify</button>
+<p class="hint">New to Rampify? This creates a free account.</p>
+<p class="center small"><button class="link" data-action="signInWithCode">Sign in with a code</button> \u00b7 <button class="link" data-action="useApiKey">Use an API key</button></p>`
+    : `<button class="btn" data-action="openFolderThenSignIn">Open Your Project Folder</button>
+<p class="hint">Rampify links each project folder to a Rampify project. After it opens, you\u2019ll sign in (or create a free account).</p>
+<p class="center small"><button class="link" data-action="newProjectThenSignIn">Start a new project</button> \u00b7 <button class="link" data-action="signInWithCode">Sign in with a code</button></p>`;
   return `
 <h1>Turn your coding agent into a <span class="accent">marketing agent</span></h1>
 <p class="lead">Rampify gives the AI you already code with real search data, specs to build against, and a scan that checks the work.</p>
@@ -69,9 +66,7 @@ function signedOut(): string {
   ${prop(ICON.spec, 'Specs your AI builds against', 'Rampify turns site scans and Discovery research into specs with the fix spelled out.')}
   ${prop(ICON.check, 'Every fix verified', 'The next scan confirms the change worked, so nothing ships on a guess.')}
 </ul>
-<button class="btn" data-action="signIn">Sign in with Rampify</button>
-<p class="hint">New to Rampify? This creates a free account.</p>
-<p class="center small"><button class="link" data-action="signInWithCode">Sign in with a code</button> · <button class="link" data-action="useApiKey">Use an API key</button></p>`;
+${actions}`;
 }
 
 function noFolder(): string {
@@ -85,8 +80,7 @@ function noProject(): string {
   return `
 <h2>Link this folder</h2>
 <p class="lead">You're signed in. Pick the Rampify project this folder belongs to, or create one.</p>
-<button class="btn" data-action="linkProject">Link a Project</button>
-${footer()}`;
+<button class="btn" data-action="linkProject">Link a Project</button>`;
 }
 
 function checklist(s: SetupSnapshot, o: HomeHtmlOptions): string {
@@ -96,8 +90,7 @@ function checklist(s: SetupSnapshot, o: HomeHtmlOptions): string {
 <h2>${name}</h2>
 <p class="error">${escapeHtml(s.error)}</p>
 <button class="btn secondary" data-action="refresh">Try Again</button>
-${s.viaSignIn ? '<p class="center"><button class="link" data-action="switchProject">Sign in again</button></p>' : ''}
-${footer()}`;
+${s.viaSignIn ? '<p class="center"><button class="link" data-action="switchProject">Sign in again</button></p>' : ''}`;
   }
 
   const p = s.project;
@@ -115,10 +108,8 @@ ${footer()}`;
 <h2>${allSettled ? 'You\u2019re set up' : 'Get set up'}</h2>
 <p class="lead">${done} of ${steps.length} done for ${name}.</p>
 <ol class="steps">
-  ${steps.map((x, i) => x.render(i === firstOpen || (x.id === 'project' && !!o.editingProject))).join('\n')}
-</ol>
-<p class="small more">More setup in the dashboard (business profile, launch stage): <button class="link" data-action="openSetup">open it</button></p>
-${footer(true)}`;
+  ${steps.map((x, i) => x.render(i === firstOpen || x.active || (x.id === 'project' && !!o.editingProject))).join('\n')}
+</ol>`;
 }
 
 function buildStep(id: SidebarStep, s: SetupSnapshot, o: HomeHtmlOptions) {
@@ -134,16 +125,25 @@ function buildStep(id: SidebarStep, s: SetupSnapshot, o: HomeHtmlOptions) {
         `${projectForm(s, o)}${err}`,
         done ? '<button class="link inline" data-action="editProject">Edit</button>' : '');
     }
-    case 'scan':
+    case 'scan': {
+      // Scan specs live in the specs list ("From your site scan"); they never
+      // complete "Your first spec" or switch the sidebar on their own.
+      const found = s.scanSpecCount > 0
+        ? ` Found ${s.scanSpecCount} ${s.scanSpecCount === 1 ? 'issue' : 'issues'}, filed as specs. <button class="link inline" data-action="showSpecs">View</button>`
+        : '';
       return step(id, s.scan === 'done', skipped, 'Scan your site',
         s.scan === 'running'
-          ? `Scanning ${domain}. This takes a few minutes; specs for what it finds show up here.`
+          ? `Scanning ${domain}. This takes a few minutes; specs for what it finds show up in your specs list.`
           : s.scan === 'failed'
             ? `The last scan of ${domain} didn\u2019t finish.`
-            : `Rampify crawls ${domain} and turns what it finds into specs.`,
+            : s.scan === 'done'
+              ? `Scanned ${domain}.${found}`
+              : `Rampify crawls ${domain} and turns what it finds into specs.`,
         s.scan === 'running'
           ? '<p class="status">Scanning\u2026</p>'
-          : `${button('startScan', busy ? 'Starting\u2026' : s.scan === 'failed' ? 'Scan Again' : 'Scan Site', busy)}${skipLink(id)}${err}`);
+          : `${button('startScan', busy ? 'Starting\u2026' : s.scan === 'failed' ? 'Scan Again' : 'Scan Site', busy)}${skipLink(id)}${err}`,
+        '', s.scan === 'running');
+    }
     case 'gsc_recommended':
     case 'gsc_optional': {
       const optional = id === 'gsc_optional';
@@ -164,22 +164,77 @@ function buildStep(id: SidebarStep, s: SetupSnapshot, o: HomeHtmlOptions) {
         <button class="btn small secondary" data-action="openGscHelp">Open Search Console</button>
       </div>${skipLink(id)}`);
     }
-    case 'ai_tool':
-      return step(id, s.aiToolConnected ?? s.mcpConfigured, skipped, 'Connect your AI tool',
-        s.mcpConfigured && s.aiToolConnected === false
-          ? 'Rampify is in your MCP config. Open your AI tool and approve Rampify\u2019s sign-in; this step completes once it connects.'
-          : 'Give Claude Code, Cursor, or Copilot access to Rampify over MCP.',
-        `${button('setupMcp', 'Set Up MCP')}${skipLink(id)}`);
-    case 'first_spec': {
-      const canScan = s.project?.startingPoint === 'live_site' && s.project?.type === 'website';
-      return step(id, s.specCount > 0, skipped, 'Your first spec',
-        'Specs show up here as they\u2019re created.',
-        `<label class="field">What are you building next?
-        <textarea id="spec-what" rows="2" placeholder="e.g. a pricing page with three tiers"></textarea></label>
-      ${button('copySpecPrompt', 'Copy Prompt for Your AI')}
-      ${canScan ? `<p class="small">Or ask it to scan: <button class="link" data-action="copyPrompt">copy the scan prompt</button></p>` : ''}${skipLink(id)}`);
+    case 'ai_tool': {
+      const waiting = s.mcpConfigured && s.aiToolConnected === false;
+      return step(id, stepDone('ai_tool', s), skipped, 'Connect your AI tool',
+        waiting
+          ? `Rampify is set up for ${escapeHtml(s.aiToolLabel)}. Sign in to Rampify when it asks${s.aiTool === 'claude' ? ' (in Claude Code, type <code>/mcp</code>)' : ''}; this step completes once it connects.`
+          : 'Your AI tool reads and updates your specs through Rampify. Connected to this folder\u2019s project only.',
+        `${toolTiles(s)}
+      <p class="small"><button class="link" data-action="setupMcp">Other tools</button></p>${skipLink(id)}`);
     }
+    case 'first_spec':
+      return firstSpecStep(s, o, skipped);
   }
+}
+
+const TOOL_TILES: { tool: SetupSnapshot['aiTool']; label: string; hint: string }[] = [
+  { tool: 'copilot', label: 'GitHub Copilot', hint: 'in VS Code' },
+  { tool: 'cursor', label: 'Cursor', hint: 'Cursor\u2019s agent' },
+  { tool: 'claude', label: 'Claude Code', hint: 'terminal or extension' },
+];
+
+/** One click per tool, the editor's own (or the one already chosen) first. */
+function toolTiles(s: SetupSnapshot): string {
+  const tiles = [...TOOL_TILES].sort((a, b) => (a.tool === s.aiTool ? -1 : b.tool === s.aiTool ? 1 : 0));
+  return `<div class="tiles">${tiles.map((t, i) =>
+    `<button class="btn small tile${i === 0 ? '' : ' secondary'}" data-action="connectTool" data-arg="${t.tool}">${t.label}<span>${t.hint}</span></button>`
+  ).join('')}</div>`;
+}
+
+/**
+ * "Your first spec": Rampify creates a getting-started spec, the user's AI
+ * works through it (tasks tick off here), and writes a spec for whatever the
+ * user is working on, which gets a Start Building button.
+ */
+function firstSpecStep(s: SetupSnapshot, o: HomeHtmlOptions, skipped: boolean) {
+  const gs = s.gettingStarted;
+  const done = stepDone('first_spec', s);
+  const tool = escapeHtml(s.aiToolLabel);
+  const busy = o.busy === 'first_spec';
+  const followUp = s.followUp
+    ? `<div class="callout"><span>Your spec is here: <b>${escapeHtml(s.followUp.title)}</b></span>
+      ${button('startBuilding', 'Start Building')}</div>`
+    : '';
+
+  if (!gs) {
+    const ask = s.hasCommits === false
+      ? `<label class="field">What are you building first?
+        <textarea id="spec-what" rows="2" placeholder="e.g. a habit tracker with reminders"></textarea></label>`
+      : '';
+    const needsTool = s.aiToolConnected === false && !s.mcpConfigured
+      ? '<p class="fine">Connect your AI tool first, so it can read the spec.</p>'
+      : '';
+    return step('first_spec', done, skipped, 'Your first spec',
+      `Rampify creates a getting-started spec and ${tool} works through it. Watch the tasks check off here.`,
+      `${ask}${needsTool}${button('startFirstSpec', busy ? 'Creating\u2026' : 'Start Your First Spec', busy)}${skipLink('first_spec')}`);
+  }
+
+  const tasks = `<ul class="tasks">${gs.tasks.map((t) => {
+    const ok = t.status === 'completed';
+    const now = t.status === 'in_progress';
+    return `<li class="${ok ? 'ok' : now ? 'now' : ''}"><i>${ok ? ICON.tick : now ? '\u2026' : ''}</i><span>${escapeHtml(t.title)}</span></li>`;
+  }).join('')}</ul>`;
+  if (done) {
+    return step('first_spec', true, false, 'Your first spec',
+      s.followUp ? `Your spec: <b>${escapeHtml(s.followUp.title)}</b> <button class="link inline" data-action="startBuilding">Start building</button>` : 'Done.',
+      '');
+  }
+  return step('first_spec', false, skipped, 'Your first spec',
+    `${tool} is working through <b>${escapeHtml(gs.title)}</b>.`,
+    `${tasks}${followUp}
+      <p class="small"><button class="link" data-action="startFirstSpec">Send it to ${tool} again</button></p>`,
+    '', true);
 }
 
 function projectSummary(s: SetupSnapshot): string {
@@ -195,7 +250,9 @@ function projectSummary(s: SetupSnapshot): string {
 
 function projectForm(s: SetupSnapshot, o: HomeHtmlOptions): string {
   const p = s.project;
-  const name = escapeHtml(p?.name ?? s.folderName ?? '');
+  // No name yet: suggest a tidied folder name, selected so typing replaces it.
+  const suggested = !p?.name;
+  const name = escapeHtml(p?.name ?? tidyFolderName(s.folderName ?? ''));
   const type = p?.type ?? 'website';
   const sp = p?.startingPoint ?? '';
   const domain = escapeHtml(p?.domain ?? '');
@@ -208,7 +265,8 @@ function projectForm(s: SetupSnapshot, o: HomeHtmlOptions): string {
       <button class="link inline" data-action="saveAnyway">It\u2019s live, save anyway</button></div>`
     : '';
   return `<form id="project-form" data-client="${escapeHtml(s.clientId ?? '')}">
-      <label class="field">Name<input name="name" value="${name}" maxlength="100" required></label>
+      <label class="field">Name<input name="name" value="${name}" maxlength="100" required${suggested ? ' data-suggested="1"' : ''}></label>
+      <p class="fine">How it\u2019ll appear in Rampify. You can rename it any time.</p>
       <fieldset><legend>What is it?</legend>${radio('type', 'website', 'Website', type === 'website')}${radio('type', 'app', 'App', type === 'app')}</fieldset>
       <fieldset class="site-q"><legend>Is your site live?</legend>
         ${radio('sp', 'idea', 'Not yet, just building', sp === 'idea')}
@@ -229,26 +287,20 @@ function skipLink(id: SidebarStep, inline = false): string {
     : `<p class="small skip"><button class="link" data-action="skip" data-arg="${id}">Skip for now</button></p>`;
 }
 
-function footer(showSpecs = false): string {
-  return `
-<div class="footer">
-  ${showSpecs ? '<button class="link" data-action="showSpecs">Show specs</button><span>\u00b7</span>' : ''}
-  <button class="link" data-action="openDashboard">Open dashboard</button>
-  <span>\u00b7</span>
-  <button class="link" data-action="switchProject">Switch project</button>
-  <span>\u00b7</span>
-  <button class="link" data-action="openDocs">Docs</button>
-</div>`;
-}
-
 function prop(icon: string, title: string, text: string): string {
   return `<li class="prop">${icon}<div><b>${title}</b><span>${text}</span></div></li>`;
 }
 
-function step(id: SidebarStep | 'connected', done: boolean, skipped: boolean, title: string, text: string, action: string, titleExtra = '') {
+function step(
+  id: SidebarStep | 'connected', done: boolean, skipped: boolean, title: string, text: string, action: string,
+  titleExtra = '',
+  /** Something is happening here (a scan, the AI working a spec): keep it open even if it isn't next. */
+  active = false
+) {
   return {
     id,
     done,
+    active: active && !done,
     skipped: skipped && !done,
     render: (isNext: boolean) => {
       const state = done && !isNext ? 'done' : skipped && !done ? 'skipped' : isNext ? 'next' : '';
@@ -333,6 +385,9 @@ if (form && saved.form && saved.client === form.dataset.client) {
 }
 if (specWhat && saved.specWhat) { specWhat.value = saved.specWhat; }
 syncForm();
+// A suggested (folder) name is selected so typing replaces it.
+const nameInput = form && form.querySelector('[name=name][data-suggested]');
+if (nameInput && !(saved.form && saved.client === form.dataset.client)) { nameInput.focus(); nameInput.select(); }
 
 document.addEventListener('input', () => { syncForm(); persist(); });
 document.addEventListener('change', () => { syncForm(); persist(); });
@@ -361,7 +416,7 @@ document.addEventListener('click', (e) => {
   const el = e.target.closest('[data-action]');
   if (!el) { return; }
   const msg = { action: el.dataset.action, arg: el.dataset.arg };
-  if (msg.action === 'copySpecPrompt') { msg.arg = specWhat ? specWhat.value : ''; }
+  if (msg.action === 'startFirstSpec') { msg.arg = specWhat ? specWhat.value : ''; }
   if (msg.action === 'saveNotLive' || msg.action === 'saveAnyway') { msg.data = formData(); }
   vscode.postMessage(msg);
 });
@@ -387,7 +442,10 @@ h2 { font-size: 15px; font-weight: 600; margin: 16px 0 4px; }
 .btn:hover { background: var(--vscode-button-hoverBackground); }
 .btn:focus-visible, .link:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 2px; }
 .btn.secondary { background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); }
-.btn.small { display: inline-block; width: auto; margin-top: 8px; padding: 4px 12px; font-weight: 500; }
+.btn.small { display: inline-block; width: auto; margin-top: 8px; padding: 4px 12px; font-weight: 500; font-size: 13px; }
+/* .small is also the grey fine-print helper: buttons keep the theme's button text. */
+.btn.small:not(.secondary) { color: var(--vscode-button-foreground); }
+.btn.small.secondary { color: var(--vscode-button-secondaryForeground); }
 .hint { margin: 8px 0 0; font-size: 12px; text-align: center; color: var(--vscode-descriptionForeground); }
 .center { text-align: center; margin: 10px 0 0; }
 .small { font-size: 12px; color: var(--vscode-descriptionForeground); }
@@ -421,5 +479,18 @@ form .btn.small { margin-top: 10px; }
 .step.skipped { opacity: .6; }
 .more { margin: 0 0 12px; }
 .btn[disabled] { opacity: .6; cursor: default; }
+.fine { margin: 4px 0 0; font-size: 12px; color: var(--vscode-descriptionForeground); }
+.tiles { display: grid; gap: 6px; margin-top: 8px; }
+.btn.tile { display: flex; justify-content: space-between; align-items: baseline; width: 100%; margin: 0; text-align: left; }
+.btn.tile span { font-size: 11px; font-weight: 400; opacity: .8; }
+.callout { display: grid; gap: 4px; margin: 10px 0 0; padding: 8px; border-radius: 4px; border: 1px solid var(--accent); }
+.callout .btn.small { margin-top: 4px; }
+.tasks { list-style: none; padding: 0; margin: 8px 0 0; display: grid; gap: 4px; }
+.tasks li { display: grid; grid-template-columns: 14px 1fr; gap: 6px; align-items: center; color: var(--vscode-descriptionForeground); }
+.tasks li.ok { color: var(--vscode-foreground); }
+.tasks li i { font-style: normal; display: grid; place-items: center; }
+.tasks li.ok svg { color: var(--accent); }
+.tasks li.now { color: var(--vscode-foreground); font-weight: 600; }
+code { font-family: var(--vscode-editor-font-family); font-size: 12px; }
 .footer { display: flex; flex-wrap: wrap; gap: 6px; font-size: 12px; color: var(--vscode-descriptionForeground); border-top: 1px solid var(--vscode-widget-border, rgba(128,128,128,.25)); padding-top: 12px; }
 `;

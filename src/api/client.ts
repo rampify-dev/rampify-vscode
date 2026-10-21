@@ -192,6 +192,30 @@ export class RampifyApiClient {
     }
   }
 
+  /** Onboarding progress: the getting-started spec, the spec the AI wrote from it, and spec counts by origin. */
+  async getGettingStarted(siteId: string): Promise<GettingStartedState | null> {
+    try {
+      const response = await this.axios.get<GettingStartedState>(`/sites/${siteId}/getting-started`, { rampifySilent: true });
+      return response.data;
+    } catch {
+      return null;
+    }
+  }
+
+  /** Create (or fetch) the getting-started spec; returns the prompt for the AI tool. */
+  async startGettingStarted(siteId: string, buildingFirst?: string): Promise<{ spec: { id: string; title: string }; prompt: string } | null> {
+    try {
+      const response = await this.axios.post<{ spec: { id: string; title: string }; prompt: string }>(
+        `/sites/${siteId}/getting-started`,
+        buildingFirst?.trim() ? { building_first: buildingFirst.trim() } : {},
+        { rampifySilent: true }
+      );
+      return response.data;
+    } catch {
+      return null;
+    }
+  }
+
   /** Start a full scan of the project's site (crawl + findings → specs). */
   async startScan(siteId: string): Promise<{ ok: true } | { ok: false; message: string }> {
     try {
@@ -292,3 +316,12 @@ export interface ProjectUpdate {
 }
 
 export type ProjectUpdateResult = { ok: true } | { ok: false; unreachable: boolean; message: string };
+
+/** GET /sites/:id/getting-started. */
+export interface GettingStartedState {
+  getting_started: { id: string; title: string; status: string; tasks: { id: string; title: string; status: string }[] } | null;
+  prompt: string | null;
+  follow_up: { id: string; title: string; status: string } | null;
+  user_spec_count: number;
+  scan_spec_count: number;
+}

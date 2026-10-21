@@ -2,7 +2,7 @@
   "name": "rampify",
   "displayName": "Rampify: Spec-Driven Development",
   "description": "Spec-driven development for AI coding tools. Define specs, track SEO issues, and verify fixes, so AI builds what you actually intended.",
-  "version": "0.9.0",
+  "version": "0.10.0",
   "publisher": "rampify",
   "engines": {
     "vscode": "^1.85.0"
@@ -89,82 +89,116 @@
     "commands": [
       {
         "command": "rampify.signIn",
-        "title": "Rampify: Sign In",
-        "icon": "$(sign-in)"
+        "title": "Sign In",
+        "icon": "$(sign-in)",
+        "category": "Rampify"
       },
       {
         "command": "rampify.signInWithCode",
-        "title": "Rampify: Sign In with a Code"
+        "title": "Sign In with a Code",
+        "category": "Rampify"
       },
       {
         "command": "rampify.switchProject",
-        "title": "Rampify: Switch Project",
-        "icon": "$(arrow-swap)"
+        "title": "Switch Project",
+        "icon": "$(arrow-swap)",
+        "category": "Rampify"
       },
       {
         "command": "rampify.setupProject",
-        "title": "Rampify: Setup Project Link",
-        "icon": "$(link)"
+        "title": "Setup Project Link",
+        "icon": "$(link)",
+        "category": "Rampify"
       },
       {
         "command": "rampify.setApiKey",
-        "title": "Rampify: Set API Key (instead of signing in)"
+        "title": "Set API Key (instead of signing in)",
+        "category": "Rampify"
       },
       {
         "command": "rampify.disconnect",
-        "title": "Rampify: Disconnect"
+        "title": "Sign Out",
+        "category": "Rampify"
       },
       {
         "command": "rampify.openSignup",
-        "title": "Rampify: Create Free Account"
+        "title": "Create Free Account",
+        "category": "Rampify"
       },
       {
         "command": "rampify.openDocs",
-        "title": "Rampify: Open Documentation"
+        "title": "Docs",
+        "category": "Rampify"
       },
       {
         "command": "rampify.switchEnvironment",
-        "title": "Rampify: Switch Environment"
+        "title": "Switch Environment",
+        "category": "Rampify"
       },
       {
         "command": "rampify.refreshFeatureSpecs",
-        "title": "Rampify: Refresh Feature Specs",
-        "icon": "$(refresh)"
+        "title": "Refresh",
+        "icon": "$(refresh)",
+        "category": "Rampify"
       },
       {
         "command": "rampify.showSpecs",
-        "title": "Rampify: Show Specs",
-        "icon": "$(list-tree)"
+        "title": "Show Specs",
+        "icon": "$(list-tree)",
+        "category": "Rampify"
       },
       {
         "command": "rampify.showSetup",
-        "title": "Rampify: Show Setup Checklist",
-        "icon": "$(checklist)"
+        "title": "Show Setup Checklist",
+        "icon": "$(checklist)",
+        "category": "Rampify"
       },
       {
         "command": "rampify.openFeatureSpec",
-        "title": "Rampify: Open Feature Spec in Browser",
-        "icon": "$(link-external)"
+        "title": "Open Feature Spec in Browser",
+        "icon": "$(link-external)",
+        "category": "Rampify"
       },
       {
         "command": "rampify.openFeatureSpecsInBrowser",
-        "title": "Rampify: Open Feature Specs in Browser",
-        "icon": "$(globe)"
+        "title": "Open Feature Specs in Browser",
+        "icon": "$(globe)",
+        "category": "Rampify"
       },
       {
         "command": "rampify.copyFeatureSpecReference",
-        "title": "Rampify: Copy Feature Spec Reference",
-        "icon": "$(copy)"
+        "title": "Copy Feature Spec Reference",
+        "icon": "$(copy)",
+        "category": "Rampify"
       },
       {
         "command": "rampify.installMcpServer",
-        "title": "Rampify: Set Up MCP Server",
-        "icon": "$(terminal)"
+        "title": "Set Up MCP",
+        "icon": "$(terminal)",
+        "category": "Rampify"
       },
       {
         "command": "rampify.toggleResolvedSpecs",
-        "title": "Rampify: Show/Hide Resolved and Idea Specs",
-        "icon": "$(eye)"
+        "title": "Show/Hide Resolved and Idea Specs",
+        "icon": "$(eye)",
+        "category": "Rampify"
+      },
+      {
+        "command": "rampify.openDashboard",
+        "title": "Open Dashboard",
+        "category": "Rampify",
+        "icon": "$(globe)"
+      },
+      {
+        "command": "rampify.finishSetupInDashboard",
+        "title": "Finish Setup in Dashboard",
+        "category": "Rampify"
+      },
+      {
+        "command": "rampify.renameProject",
+        "title": "Rename Project",
+        "category": "Rampify",
+        "icon": "$(edit)"
       }
     ],
     "viewsContainers": {
@@ -198,36 +232,6 @@
     "menus": {
       "view/title": [
         {
-          "command": "rampify.toggleResolvedSpecs",
-          "when": "view == rampify.featureSpecs",
-          "group": "navigation"
-        },
-        {
-          "command": "rampify.refreshFeatureSpecs",
-          "when": "view == rampify.featureSpecs",
-          "group": "navigation"
-        },
-        {
-          "command": "rampify.openFeatureSpecsInBrowser",
-          "when": "view == rampify.featureSpecs",
-          "group": "navigation"
-        },
-        {
-          "command": "rampify.switchProject",
-          "when": "view == rampify.featureSpecs",
-          "group": "1_project@1"
-        },
-        {
-          "command": "rampify.disconnect",
-          "when": "view == rampify.featureSpecs",
-          "group": "1_project@2"
-        },
-        {
-          "command": "rampify.refreshFeatureSpecs",
-          "when": "view == rampify.home",
-          "group": "navigation"
-        },
-        {
           "command": "rampify.showSpecs",
           "when": "view == rampify.home",
           "group": "navigation@0"
@@ -236,6 +240,56 @@
           "command": "rampify.showSetup",
           "when": "view == rampify.featureSpecs",
           "group": "navigation@0"
+        },
+        {
+          "command": "rampify.toggleResolvedSpecs",
+          "when": "view == rampify.featureSpecs",
+          "group": "navigation@1"
+        },
+        {
+          "command": "rampify.refreshFeatureSpecs",
+          "when": "view == rampify.home || view == rampify.featureSpecs",
+          "group": "navigation@2"
+        },
+        {
+          "command": "rampify.openDashboard",
+          "when": "view == rampify.home || view == rampify.featureSpecs",
+          "group": "1_dashboard@1"
+        },
+        {
+          "command": "rampify.finishSetupInDashboard",
+          "when": "view == rampify.home || view == rampify.featureSpecs",
+          "group": "1_dashboard@2"
+        },
+        {
+          "command": "rampify.openFeatureSpecsInBrowser",
+          "when": "view == rampify.featureSpecs",
+          "group": "1_dashboard@3"
+        },
+        {
+          "command": "rampify.renameProject",
+          "when": "view == rampify.home || view == rampify.featureSpecs",
+          "group": "2_project@1"
+        },
+        {
+          "command": "rampify.switchProject",
+          "when": "view == rampify.home || view == rampify.featureSpecs",
+          "group": "2_project@2"
+        },
+        {
+          "command": "rampify.installMcpServer",
+          "when": "view == rampify.home || view == rampify.featureSpecs",
+          "group": "3_ai@1"
+        },
+        {
+          "command": "rampify.openDocs",
+          "when": "view == rampify.home || view == rampify.featureSpecs",
+          "group": "4_help@1"
+        },
+        {
+          "command": "rampify.disconnect",
+          "when": "view == rampify.home || view == rampify.featureSpecs",
+          "group": "5_account@1"
         }
       ],
       "view/item/context": [
@@ -250,7 +304,13 @@
           "group": "inline@2"
         }
       ]
-    }
+    },
+    "mcpServerDefinitionProviders": [
+      {
+        "id": "rampify",
+        "label": "Rampify"
+      }
+    ]
   },
   "scripts": {
     "vscode:prepublish": "npm run bundle",
