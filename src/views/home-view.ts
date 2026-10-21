@@ -59,7 +59,7 @@ export class HomeViewProvider implements vscode.WebviewViewProvider, vscode.Disp
     view.onDidChangeVisibility(() => this.syncPolling());
     view.onDidDispose(() => { this.view = undefined; this.syncPolling(); });
     this.render();
-    this.state.refresh();
+    this.state.refresh({ background: true });
     this.syncPolling();
   }
 
@@ -97,7 +97,7 @@ export class HomeViewProvider implements vscode.WebviewViewProvider, vscode.Disp
     if (wanted && !this.pollTimer) {
       this.pollMs = ms;
       this.pollTimer = setInterval(() => {
-        if (vscode.window.state.focused) { this.state.refresh(); }
+        if (vscode.window.state.focused) { this.state.refresh({ background: true }); }
       }, ms);
     }
   }

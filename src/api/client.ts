@@ -22,6 +22,20 @@ declare module 'axios' {
 
 export type ApiKeyCheck = 'valid' | 'invalid' | 'unreachable';
 
+/**
+ * Why a request is being made, sent as X-Rampify-Trigger so Rampify can tell
+ * a person acting in the editor ("user": a click or command) from the
+ * extension refreshing on its own ("background": timers, window focus, the
+ * panel opening). Spec dfa02633.
+ */
+export type RequestTrigger = 'user' | 'background';
+
+/** "vscode-extension/<version>", sent as X-Rampify-Client on every request. */
+function clientHeader(): string {
+  const version = vscode.extensions.getExtension('rampify.rampify')?.packageJSON?.version ?? 'unknown';
+  return `vscode-extension/${version}`;
+}
+
 export interface RampifyConfig {
   apiKey: string;
   environment: Environment;
@@ -31,9 +45,11 @@ export interface RampifyConfig {
 export class RampifyApiClient {
   private axios: AxiosInstance;
   private config: RampifyConfig;
+  private trigger: RequestTrigger;
 
-  constructor(config: RampifyConfig) {
+  constructor(config: RampifyConfig, trigger: RequestTrigger = 'user') {
     this.config = config;
+    this.trigger = trigger;
     const baseURL = this.getBaseUrl();
 
     console.log('API Client Config:', {
@@ -47,6 +63,8 @@ export class RampifyApiClient {
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${config.apiKey}`,
+        'X-Rampify-Client': clientHeader(),
+        'X-Rampify-Trigger': trigger,
       },
       timeout: 30000,
     });
@@ -99,6 +117,11 @@ export class RampifyApiClient {
   // ============================================================================
 
   /** `silent` skips the error toast (background refreshes report their own state). */
+  /** The same client, for requests the extension makes on its own (see RequestTrigger). */
+  withTrigger(trigger: RequestTrigger): RampifyApiClient {
+    return trigger === this.trigger ? this : new RampifyApiClient(this.config, trigger);
+  }
+
   async getClients(opts: { silent?: boolean } = {}): Promise<Client[]> {
     const response = await this.axios.get<{ clients: Client[] }>('/clients', { rampifySilent: opts.silent });
     return response.data.clients;

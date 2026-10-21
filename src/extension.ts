@@ -96,7 +96,7 @@ export async function activate(context: vscode.ExtensionContext) {
     if (pollTimer) { return; }
     pollTimer = setInterval(() => {
       if (windowFocused && featureSpecsProvider.isStale()) {
-        featureSpecsProvider.refresh();
+        featureSpecsProvider.refresh({ background: true });
       }
     }, POLL_INTERVAL_MS);
   };
@@ -112,7 +112,7 @@ export async function activate(context: vscode.ExtensionContext) {
     featureSpecsView.onDidChangeVisibility((e) => {
       if (e.visible) {
         if (featureSpecsProvider.isStale()) {
-          featureSpecsProvider.refresh();
+          featureSpecsProvider.refresh({ background: true });
         }
         startPolling();
       } else {
@@ -126,10 +126,10 @@ export async function activate(context: vscode.ExtensionContext) {
     vscode.window.onDidChangeWindowState((e) => {
       windowFocused = e.focused;
       if (e.focused && featureSpecsProvider.isStale()) {
-        featureSpecsProvider.refresh();
+        featureSpecsProvider.refresh({ background: true });
       }
       // Coming back from the browser (setup wizard, sign-in) or the AI chat.
-      if (e.focused) { setupState.refresh(); }
+      if (e.focused) { setupState.refresh({ background: true }); }
     })
   );
 
@@ -207,8 +207,8 @@ export async function activate(context: vscode.ExtensionContext) {
     session.onDidChange(() => {
       apiClient = createApiClient();
       updateOnboardingContext();
-      featureSpecsProvider.refresh();
-      setupState.refresh();
+      featureSpecsProvider.refresh({ background: true });
+      setupState.refresh({ background: true });
     })
   );
 
@@ -329,8 +329,8 @@ export async function activate(context: vscode.ExtensionContext) {
         // Recreate API client with new config
         apiClient = createApiClient();
         updateOnboardingContext();
-        featureSpecsProvider.refresh();
-        setupState.refresh();
+        featureSpecsProvider.refresh({ background: true });
+        setupState.refresh({ background: true });
       }
     })
   );
@@ -362,8 +362,8 @@ export async function activate(context: vscode.ExtensionContext) {
 
   // Set initial onboarding context keys
   updateOnboardingContext();
-  context.subscriptions.push(vscode.workspace.onDidChangeWorkspaceFolders(() => setupState.refresh()));
-  setupState.refresh();
+  context.subscriptions.push(vscode.workspace.onDidChangeWorkspaceFolders(() => setupState.refresh({ background: true })));
+  setupState.refresh({ background: true });
 }
 
 export function deactivate() {
@@ -649,7 +649,6 @@ async function setupProjectLink(): Promise<void> {
       return {
         label: projectDisplayName(client),
         description: project?.domain || undefined,
-        detail: client.status === 'active' ? '✓ Active' : client.status,
         client
       };
     });

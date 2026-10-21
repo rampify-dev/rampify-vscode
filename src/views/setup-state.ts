@@ -141,15 +141,18 @@ export class SetupState implements vscode.Disposable {
     await this.refresh();
   }
 
-  /** Re-read everything; concurrent calls share one load. */
-  refresh(): Promise<void> {
+  /**
+   * Re-read everything; concurrent calls share one load. `background` marks
+   * loads the extension starts on its own (polling, focus), not a click.
+   */
+  refresh(opts: { background?: boolean } = {}): Promise<void> {
     if (!this.loading) {
-      this.loading = this.load().finally(() => { this.loading = undefined; });
+      this.loading = this.load(opts.background ?? false).finally(() => { this.loading = undefined; });
     }
     return this.loading;
   }
 
-  private async load(): Promise<void> {
+  private async load(background: boolean): Promise<void> {
     const next = emptySnapshot();
     const folder = vscode.workspace.workspaceFolders?.[0];
     next.hasFolder = !!folder;
@@ -163,7 +166,7 @@ export class SetupState implements vscode.Disposable {
     next.aiToolLabel = AI_TOOL_LABELS[next.aiTool];
 
     if (next.signedIn && next.clientId) {
-      const api = this.getApiClient();
+      const api = this.getApiClient().withTrigger(background ? 'background' : 'user');
       try {
         const clients = await api.getClients({ silent: true });
         const client = clients.find((c) => c.id === next.clientId);

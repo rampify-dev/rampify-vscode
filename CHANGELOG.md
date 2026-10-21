@@ -2,6 +2,11 @@
 
 All notable changes to the Rampify VS Code extension will be documented in this file.
 
+## [0.11.0] - 2026-10-21
+
+### Changed
+- Requests to Rampify now say which client sent them (the extension and its version) and whether you asked for them (a click or command) or the sidebar refreshed on its own. Rampify uses this to count what you did, separately from the extension keeping itself up to date. No new data about your code or files is sent
+
 ## [0.10.0] - 2026-10-21
 
 ### Changed

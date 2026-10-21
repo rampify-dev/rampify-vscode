@@ -181,6 +181,7 @@ export class FeatureSpecsTreeProvider implements vscode.TreeDataProvider<TreeIte
   private specs: FeatureSpec[] = [];
   private loaded = false;
   private lastLoadedAt = 0;
+  private nextLoadBackground = false;
   private showResolved = false;
 
   constructor(
@@ -200,7 +201,9 @@ export class FeatureSpecsTreeProvider implements vscode.TreeDataProvider<TreeIte
     this._onDidChangeTreeData.fire();
   }
 
-  refresh(): void {
+  /** `background`: the extension refreshing on its own (poll, focus, visibility), not a click. */
+  refresh(opts: { background?: boolean } = {}): void {
+    this.nextLoadBackground = opts.background ?? false;
     this.loaded = false;
     this.lastLoadedAt = 0;
     this.specs = [];
@@ -278,7 +281,9 @@ export class FeatureSpecsTreeProvider implements vscode.TreeDataProvider<TreeIte
   }
 
   private async loadData(clientId: string): Promise<void> {
-    const site = await this.getApiClient().getSite(clientId);
+    const api = this.getApiClient().withTrigger(this.nextLoadBackground ? 'background' : 'user');
+    this.nextLoadBackground = false;
+    const site = await api.getSite(clientId);
     if (!site) {
       this.specs = [];
       this.loaded = true;
@@ -286,7 +291,7 @@ export class FeatureSpecsTreeProvider implements vscode.TreeDataProvider<TreeIte
       return;
     }
 
-    this.specs = await this.getApiClient().getFeatureSpecs(site.id);
+    this.specs = await api.getFeatureSpecs(site.id);
     this.loaded = true;
     this.lastLoadedAt = Date.now();
   }

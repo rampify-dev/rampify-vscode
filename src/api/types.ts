@@ -18,7 +18,6 @@ export interface Client {
   projects?: ClientProject | ClientProject[] | null;
   contact_email: string | null;
   contact_name: string | null;
-  status: 'prospect' | 'active' | 'paused' | 'churned';
   created_at: string;
   updated_at: string;
 }
