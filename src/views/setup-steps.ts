@@ -1,86 +1,116 @@
 /**
- * Which setup steps the sidebar shows, per the project's answers (spec
- * aa7fcad3). The sidebar counterpart of the web wizard's PATH_MATRIX
- * (lib/setup-wizard/path-router.ts); both are tabulated side by side in
- * .claude/docs/wizard-behavior.md, so keep the three in step.
- *
- * Why each answer changes the steps:
- *   - idea (not live, no domain): nothing to crawl, no Search Console yet.
- *   - domain_only (domain, not live): a parked page crawls empty, so no scan;
- *     Search Console is optional, so data collects from launch day.
- *   - live_site: scan it, and Search Console is recommended (no rankings or
- *     clicks without it).
- *   - app: no site questions (matches the wizard's app path).
+ * The sidebar's setup steps: the one onboarding (spec 724f9f24), read from the
+ * server (GET /sites/:id/setup-advance → `onboarding`), the same state the web
+ * setup page and the AI tool's suggest_next_action read. Finishing a step
+ * anywhere finishes it here, and a skip is stored on the server, so it holds
+ * on every surface. The extension keeps no step list of its own; it only adds
+ * "Your first spec" after onboarding (the getting-started spec, spec a3f4b733).
  *
  * Pure (no vscode import) so the Home panel's HTML can be rendered in tests.
  */
 
-export type ProjectType = 'website' | 'app';
-export type StartingPoint = 'idea' | 'domain_only' | 'live_site';
+export type OnboardingStep = 'site' | 'ai_tool' | 'search_console' | 'how_found';
+export type SidebarStep = OnboardingStep | 'first_spec';
 
-export type SidebarStep =
-  | 'project'
-  | 'scan'
-  | 'gsc_recommended'
-  | 'gsc_optional'
-  | 'ai_tool'
-  | 'first_spec';
-
-export const SIDEBAR_STEPS: {
-  website: Record<StartingPoint, readonly SidebarStep[]>;
-  app: readonly SidebarStep[];
-} = {
-  website: {
-    idea:        ['project', 'ai_tool', 'first_spec'],
-    domain_only: ['project', 'gsc_optional', 'ai_tool', 'first_spec'],
-    live_site:   ['project', 'scan', 'gsc_recommended', 'ai_tool', 'first_spec'],
-  },
-  app: ['project', 'ai_tool', 'first_spec'],
-} as const;
-
-/** Before the project questions are answered, only the core steps show. */
-const UNANSWERED: readonly SidebarStep[] = ['project', 'ai_tool', 'first_spec'];
-
-export function sidebarSteps(type: ProjectType | null, startingPoint: StartingPoint | null): SidebarStep[] {
-  if (type === 'app') { return [...SIDEBAR_STEPS.app]; }
-  if (type === 'website' && startingPoint) { return [...SIDEBAR_STEPS.website[startingPoint]]; }
-  return [...UNANSWERED];
+/** One step of the server's onboarding state (lib/onboarding/state.ts OnboardingStepState). */
+export interface OnboardingStepState {
+  step: OnboardingStep;
+  label: string;
+  gate: 'required' | 'optional';
+  status: 'done' | 'todo' | 'skipped';
+  detail: string | null;
 }
 
-/** The project questions count as answered once we know whether there's a site to work with. */
-export function projectAnswered(type: ProjectType | null, startingPoint: StartingPoint | null): boolean {
-  return type === 'app' || !!startingPoint;
+/** The server's onboarding state (lib/onboarding/state.ts OnboardingState). */
+export interface OnboardingState {
+  steps: OnboardingStepState[];
+  next: OnboardingStep | null;
+  complete: boolean;
+  facts: {
+    siteState: 'no_site' | 'not_scanned' | 'crawl_failed' | 'scanned';
+    searchConsole: 'connected' | 'needs_property' | 'pending_verification' | 'needs_reauth' | 'none';
+    aiTool: 'used' | 'connected' | 'none';
+    aiToolLive: boolean;
+    howFound: 'answered' | 'skipped' | 'unanswered';
+    skipped: string[];
+  };
+}
+
+/** Steps an older server (no `onboarding` field) still gets: the two required ones. */
+const FALLBACK: readonly OnboardingStep[] = ['site', 'ai_tool'];
+
+/**
+ * The sidebar's steps, in order: the server's. "Your first spec" was a second
+ * prompt after the AI tool's; the first prompt's suggest_next_action now
+ * offers it (spec 8a5bf8b1).
+ */
+export function sidebarSteps(onboarding: OnboardingState | null): OnboardingStep[] {
+  return onboarding ? onboarding.steps.map((s) => s.step) : [...FALLBACK];
 }
 
 /** The parts of the sidebar's state the step rules read (see SetupSnapshot). */
 export interface StepInputs {
-  needsProjectSetup: boolean;
-  scan: 'none' | 'running' | 'done' | 'failed';
-  gsc: { connected: boolean; hasProperty: boolean };
+  onboarding: OnboardingState | null;
+  /** Older servers only: the project has a site. */
+  hasSite: boolean;
   aiToolConnected: boolean | null;
   mcpConfigured: boolean;
   gettingStarted: { status: string } | null;
   userSpecCount: number;
+  /** "Your first spec" skipped on this machine (it's not an onboarding step). */
+  firstSpecSkipped: boolean;
+}
+
+/** The step rules' inputs from the sidebar's snapshot (SetupSnapshot's fields of the same names). */
+export function stepInputs(s: Omit<StepInputs, 'hasSite'> & { project: { domain: string | null } | null }): StepInputs {
+  return {
+    onboarding: s.onboarding,
+    hasSite: !!s.project?.domain,
+    aiToolConnected: s.aiToolConnected,
+    mcpConfigured: s.mcpConfigured,
+    gettingStarted: s.gettingStarted,
+    userSpecCount: s.userSpecCount,
+    firstSpecSkipped: s.firstSpecSkipped,
+  };
 }
 
 const FINISHED = new Set(['completed', 'verified']);
 
+function serverStatus(id: OnboardingStep, s: StepInputs): OnboardingStepState['status'] | null {
+  return s.onboarding?.steps.find((x) => x.step === id)?.status ?? null;
+}
+
 /**
- * Whether a step is done. "Your first spec" counts only the user's own work,
- * never specs a site scan filed: it's done when the getting-started spec is
- * finished, or (for people who already had specs) when the project has a spec
- * of their own and no getting-started spec.
+ * Whether a step is done. Onboarding steps: what the server says. "Your first
+ * spec" counts only the user's own work, never specs a site scan filed.
  */
 export function stepDone(id: SidebarStep, s: StepInputs): boolean {
-  switch (id) {
-    case 'project': return !s.needsProjectSetup;
-    case 'scan': return s.scan === 'done';
-    case 'gsc_recommended':
-    case 'gsc_optional': return s.gsc.connected && s.gsc.hasProperty;
-    case 'ai_tool': return s.aiToolConnected ?? s.mcpConfigured;
-    case 'first_spec':
-      return s.gettingStarted ? FINISHED.has(s.gettingStarted.status) : s.userSpecCount > 0;
+  if (id === 'first_spec') {
+    return s.gettingStarted ? FINISHED.has(s.gettingStarted.status) : s.userSpecCount > 0;
   }
+  const status = serverStatus(id, s);
+  if (status) { return status === 'done'; }
+  // Older server: the two required steps from what the extension can see.
+  if (id === 'site') { return s.hasSite; }
+  if (id === 'ai_tool') { return s.aiToolConnected ?? s.mcpConfigured; }
+  return false;
+}
+
+/** Whether a step was skipped: on the server for onboarding steps, on this machine for the first spec. */
+export function stepSkipped(id: SidebarStep, s: StepInputs): boolean {
+  if (id === 'first_spec') { return s.firstSpecSkipped; }
+  return serverStatus(id, s) === 'skipped';
+}
+
+/**
+ * Setup is settled: every step done or skipped, and the site's scan has run.
+ * A site whose scan failed or never ran counts as added, but the checklist
+ * stays up until the scan works (its failure and Scan Again live there).
+ */
+export function setupSettled(s: StepInputs): boolean {
+  const site = s.onboarding?.facts.siteState;
+  if (site === 'not_scanned' || site === 'crawl_failed') { return false; }
+  return sidebarSteps(s.onboarding).every((id) => stepDone(id, s) || stepSkipped(id, s));
 }
 
 /** "my-test_project" / "myTestProject" → "My Test Project". */

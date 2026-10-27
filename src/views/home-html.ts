@@ -1,5 +1,6 @@
-import type { SetupSnapshot } from './setup-state';
-import { sidebarSteps, stepDone, tidyFolderName, type SidebarStep } from './setup-steps';
+import type { AiTool, EditorKind, SetupSnapshot } from './setup-snapshot';
+import { claudePromptCommand, GET_STARTED_PROMPT } from '../mcp/prompt-names';
+import { setupSettled, sidebarSteps, stepDone, stepInputs, stepSkipped, tidyFolderName, type OnboardingStep, type SidebarStep, type StepInputs } from './setup-steps';
 
 /**
  * HTML for the Home panel. Pure (no vscode import) so it can be rendered and
@@ -9,7 +10,6 @@ import { sidebarSteps, stepDone, tidyFolderName, type SidebarStep } from './setu
 
 /** Transient panel state the provider holds between renders. */
 export type HomeNotice =
-  | { kind: 'unreachable'; domain: string }
   | { kind: 'error'; step: SidebarStep; message: string };
 
 export interface HomeHtmlOptions {
@@ -17,15 +17,19 @@ export interface HomeHtmlOptions {
   /** The editor's name, e.g. "VS Code" or "Cursor". */
   editorName?: string;
   notice?: HomeNotice | null;
-  /** The project step's form is open on a finished step ("Edit"). */
+  /** The site step's form is open on a finished step ("Change"). */
   editingProject?: boolean;
   /** A save or scan request is in flight for this step. */
   busy?: SidebarStep | null;
+  /** Steps put off for now ("No site yet"): not offered as next until picked up again. */
+  later?: readonly SidebarStep[];
 }
 
 export function renderHomeHtml(s: SetupSnapshot, o: HomeHtmlOptions): string {
-  const body = !s.signedIn
-    ? signedOut(s.hasFolder)
+  const body = s.signInPhase === 'finishing'
+    ? signingIn()
+    : !s.signedIn
+    ? signedOut(s.hasFolder, s.signInPhase)
     : !s.hasFolder
       ? noFolder()
       : !s.clientId
@@ -48,16 +52,31 @@ ${body}
 </html>`;
 }
 
-function signedOut(hasFolder: boolean): string {
+/** The browser handed back: linking the folder and loading its checklist. */
+function signingIn(): string {
+  return `
+<h2>Signing you in\u2026</h2>
+<p class="lead"><span class="spinner"></span>Linking this folder to your project and loading its setup. This takes a few seconds.</p>`;
+}
+
+function signedOut(hasFolder: boolean, phase: SetupSnapshot['signInPhase'] = 'idle'): string {
   // Each folder links to one Rampify project, so with no folder open the
   // first step is opening one; sign-in picks up after the window reloads.
-  const actions = hasFolder
+  const waiting = phase === 'browser'
+    ? `<button class="btn" disabled><span class="spinner"></span>Waiting for your browser\u2026</button>
+<p class="hint">Finish signing in (or creating your account) in the browser. This panel updates as soon as you do.</p>
+<p class="center small"><button class="link" data-action="signIn">Reopen the page</button> \u00b7 <button class="link" data-action="signInWithCode">Sign in with a code</button> \u00b7 <button class="link" data-action="cancelSignIn">Cancel</button></p>`
+    : phase === 'code'
+      ? `<button class="btn" disabled><span class="spinner"></span>Waiting for you to confirm the code\u2026</button>
+<p class="hint">Confirm the code in your browser. This panel updates as soon as you do.</p>`
+      : '';
+  const actions = waiting || (hasFolder
     ? `<button class="btn" data-action="signIn">Sign in with Rampify</button>
 <p class="hint">New to Rampify? This creates a free account.</p>
 <p class="center small"><button class="link" data-action="signInWithCode">Sign in with a code</button> \u00b7 <button class="link" data-action="useApiKey">Use an API key</button></p>`
     : `<button class="btn" data-action="openFolderThenSignIn">Open Your Project Folder</button>
 <p class="hint">Rampify links each project folder to a Rampify project. After it opens, you\u2019ll sign in (or create a free account).</p>
-<p class="center small"><button class="link" data-action="newProjectThenSignIn">Start a new project</button> \u00b7 <button class="link" data-action="signInWithCode">Sign in with a code</button></p>`;
+<p class="center small"><button class="link" data-action="newProjectThenSignIn">Start a new project</button> \u00b7 <button class="link" data-action="signInWithCode">Sign in with a code</button></p>`);
   return `
 <h1>Turn your coding agent into a <span class="accent">marketing agent</span></h1>
 <p class="lead">Rampify gives the AI you already code with real search data, specs to build against, and a scan that checks the work.</p>
@@ -93,191 +112,230 @@ function checklist(s: SetupSnapshot, o: HomeHtmlOptions): string {
 ${s.viaSignIn ? '<p class="center"><button class="link" data-action="switchProject">Sign in again</button></p>' : ''}`;
   }
 
-  const p = s.project;
-  const ids = sidebarSteps(s.needsProjectSetup ? null : p?.type ?? null, s.needsProjectSetup ? null : p?.startingPoint ?? null);
+  // The steps are the server's onboarding (the same on the web and in the AI
+  // tool), then "Your first spec".
+  const inputs = stepInputs(s);
   const steps = [
     step('connected', true, false, 'Connected', `This folder is linked to <b>${name}</b>.`, ''),
-    ...ids.map((id) => buildStep(id, s, o)),
+    ...sidebarSteps(s.onboarding).map((id) => buildStep(id, s, o, inputs)),
   ];
   const done = steps.filter((x) => x.done).length;
-  // The first step that's neither done nor skipped is the one to act on.
-  const firstOpen = steps.findIndex((x) => !x.done && !x.skipped);
-  const allSettled = firstOpen === -1;
+  // One step in focus at a time: the first that's neither done, skipped nor
+  // put off; when every step is settled, the first that needs a look (a scan
+  // that failed or never ran, which also has its own "Scan again" link).
+  const later = o.later ?? [];
+  const firstOpen = steps.findIndex((x) => !x.done && !x.skipped && !later.includes(x.id as SidebarStep));
+  const focus = firstOpen !== -1 ? firstOpen : steps.findIndex((x) => x.active);
+  const allSettled = setupSettled(inputs);
 
   return `
 <h2>${allSettled ? 'You\u2019re set up' : 'Get set up'}</h2>
 <p class="lead">${done} of ${steps.length} done for ${name}.</p>
-<ol class="steps">
-  ${steps.map((x, i) => x.render(i === firstOpen || x.active || (x.id === 'project' && !!o.editingProject))).join('\n')}
+<ol class="steps"${stepDone('site', inputs) ? ' data-site-saved="1"' : ''}>
+  ${steps.map((x, i) => x.render(i === focus || (x.id === 'site' && !!o.editingProject))).join('\n')}
 </ol>`;
 }
 
-function buildStep(id: SidebarStep, s: SetupSnapshot, o: HomeHtmlOptions) {
-  const skipped = s.skipped.includes(id);
+function buildStep(id: OnboardingStep, s: SetupSnapshot, o: HomeHtmlOptions, inputs: StepInputs) {
+  const skipped = stepSkipped(id, inputs);
   const domain = escapeHtml(s.project?.domain ?? 'your site');
   const busy = o.busy === id;
   const err = o.notice?.kind === 'error' && o.notice.step === id ? `<p class="error">${escapeHtml(o.notice.message)}</p>` : '';
   switch (id) {
-    case 'project': {
-      const done = !s.needsProjectSetup && !o.editingProject;
-      return step(id, done, skipped && s.needsProjectSetup, 'Your project',
-        done ? projectSummary(s) : '',
-        `${projectForm(s, o)}${err}`,
-        done ? '<button class="link inline" data-action="editProject">Edit</button>' : '');
-    }
-    case 'scan': {
-      // Scan specs live in the specs list ("From your site scan"); they never
-      // complete "Your first spec" or switch the sidebar on their own.
+    case 'site': {
+      const hasSite = stepDone('site', inputs) && !o.editingProject;
+      if (!hasSite) {
+        if (o.later?.includes('site') && !o.editingProject) {
+          return step(id, false, false, 'Add your website', 'No site yet. Rampify can\u2019t look at your search presence until you add one.', '',
+            '<button class="link inline" data-action="unlater" data-arg="site">Add it now</button>');
+        }
+        return step(id, false, false, 'Add your website', 'The website you want people to find: your product\u2019s or company\u2019s site. Rampify scans it in the background while you connect your AI tool.',
+          `${siteForm(s, o)}${err}${o.editingProject ? '' : '<p class="small"><button class="link" data-action="later" data-arg="site">No site yet? Continue without one</button></p>'}`);
+      }
+      // The site is in: its scan's state, and what to do when it didn't finish.
       const found = s.scanSpecCount > 0
         ? ` Found ${s.scanSpecCount} ${s.scanSpecCount === 1 ? 'issue' : 'issues'}, filed as specs. <button class="link inline" data-action="showSpecs">View</button>`
         : '';
-      return step(id, s.scan === 'done', skipped, 'Scan your site',
-        s.scan === 'running'
-          ? `Scanning ${domain}. This takes a few minutes; specs for what it finds show up in your specs list.`
-          : s.scan === 'failed'
-            ? `The last scan of ${domain} didn\u2019t finish.`
-            : s.scan === 'done'
-              ? `Scanned ${domain}.${found}`
-              : `Rampify crawls ${domain} and turns what it finds into specs.`,
-        s.scan === 'running'
-          ? '<p class="status">Scanning\u2026</p>'
-          : `${button('startScan', busy ? 'Starting\u2026' : s.scan === 'failed' ? 'Scan Again' : 'Scan Site', busy)}${skipLink(id)}${err}`,
-        '', s.scan === 'running');
-    }
-    case 'gsc_recommended':
-    case 'gsc_optional': {
-      const optional = id === 'gsc_optional';
-      const done = s.gsc.connected && s.gsc.hasProperty;
-      if (s.gsc.connected && !s.gsc.hasProperty) {
-        return step(id, false, skipped, 'Connect Google Search Console',
-          `Search Console is connected. Pick the property for ${domain} to start syncing.`,
-          `${button('openGscPage', 'Pick Property')}${skipLink(id)}`);
+      // A site can be changed here until a scan has found its pages; replacing a
+      // scanned site clears its scan, so that's done on purpose in the dashboard.
+      const change = '<button class="link inline" data-action="editProject">Change</button>';
+      if (s.scan === 'running') {
+        return step(id, true, false, 'Add your website', `${domain} \u00b7 Scanning in the background. Specs for what it finds show up in your specs list.`, '');
       }
-      return step(id, done, skipped, optional ? 'Connect Search Console (optional)' : 'Connect Google Search Console',
-        optional
-          ? 'Set it up now so search data starts collecting the day you launch.'
+      if (s.scan === 'failed' || s.scan === 'none') {
+        const why = s.scan === 'failed'
+          ? s.scanFailure ? `${escapeHtml(s.scanFailure.summary)} ${escapeHtml(s.scanFailure.nextStep)}` : `The last scan of ${domain} didn\u2019t finish.`
+          : `${domain} hasn\u2019t been scanned yet.`;
+        const help = s.scanFailure?.helpUrl ? ' <button class="link inline" data-action="openCrawlerHelp">How to do it</button>' : '';
+        return step(id, true, false, 'Add your website', `${why}${help}`,
+          `${button('startScan', busy ? 'Starting\u2026' : s.scan === 'failed' ? 'Scan Again' : 'Scan Site', busy)}${err}`,
+          // Reachable while another step has the focus.
+          `${change} \u00b7 <button class="link inline" data-action="startScan">${s.scan === 'failed' ? 'Scan again' : 'Scan now'}</button>`, true);
+      }
+      return step(id, true, false, 'Add your website', `${domain} \u00b7 Scanned.${found}`, '');
+    }
+    case 'search_console': {
+      const sc = s.onboarding?.facts.searchConsole ?? (s.gsc.connected ? (s.gsc.hasProperty ? 'connected' : 'needs_property') : 'none');
+      if (sc === 'pending_verification') {
+        // Not skippable here, as on the web: it's half done.
+        return step(id, false, false, 'Connect Search Console (optional)',
+          `${domain} isn\u2019t verified in Search Console yet. Finish verifying it there, then check the connection.`,
+          `${button('openGscHelp', 'Open Search Console')} ${button('openGscPage', 'Check Connection')}${err}`);
+      }
+      if (sc === 'needs_property') {
+        return step(id, false, skipped, 'Connect Search Console (optional)',
+          `Search Console is connected. Pick the property for ${domain} to start syncing.`,
+          `${button('openGscPage', 'Pick Property')}${err}${skipLink(id)}`);
+      }
+      return step(id, sc === 'connected', skipped, sc === 'needs_reauth' ? 'Reconnect Search Console' : 'Connect Search Console (optional)',
+        sc === 'needs_reauth'
+          ? 'The Search Console link expired, so search data stopped coming in.'
           : 'See what people search to find you. Without it, Rampify can\u2019t see your rankings or clicks.',
-        `${button('connectGsc', 'Connect Search Console')}
+        `${button('connectGsc', sc === 'needs_reauth' ? 'Reconnect' : 'Connect Search Console')}
       <p class="small"><button class="link" data-toggle="gsc-help">I don\u2019t have it set up yet</button></p>
       <div id="gsc-help" class="help" hidden>
         <span>Search Console is Google\u2019s free tool for your site\u2019s search data. Add ${domain} there and verify it (a few minutes), then come back and connect.</span>
         <button class="btn small secondary" data-action="openGscHelp">Open Search Console</button>
-      </div>${skipLink(id)}`);
+      </div>${err}${skipLink(id)}`);
     }
     case 'ai_tool': {
-      const waiting = s.mcpConfigured && s.aiToolConnected === false;
-      return step(id, stepDone('ai_tool', s), skipped, 'Connect your AI tool',
-        waiting
-          ? `Rampify is set up for ${escapeHtml(s.aiToolLabel)}. Sign in to Rampify when it asks${s.aiTool === 'claude' ? ' (in Claude Code, type <code>/mcp</code>)' : ''}; this step completes once it connects.`
-          : 'Your AI tool reads and updates your specs through Rampify. Connected to this folder\u2019s project only.',
+      const done = stepDone('ai_tool', inputs);
+      const later = '<p class="small"><button class="link" data-action="later" data-arg="ai_tool">I\u2019ll connect later</button></p>';
+      if (!done && o.later?.includes('ai_tool')) {
+        return step(id, false, false, 'Connect your AI tool', 'Not connected yet. Your AI tool is where you use Rampify day to day.', '',
+          '<button class="link inline" data-action="unlater" data-arg="ai_tool">Connect it now</button>');
+      }
+      // A tool was connected from here: its next steps, open until it makes
+      // its first request (the server's fact, however it got connected).
+      if (!done && s.pickedAiTool) {
+        return step(id, false, false, 'Connect your AI tool', `Finish connecting ${escapeHtml(TOOL_TILES[s.pickedAiTool].label)}:`,
+          `${aiToolNextSteps(s, s.pickedAiTool)}${later}`, '', true);
+      }
+      return step(id, done, false, 'Connect your AI tool',
+        'Pick the AI tool you code with. It reads and updates your specs through Rampify, for this folder\u2019s project only.',
         `${toolTiles(s)}
-      <p class="small"><button class="link" data-action="setupMcp">Other tools</button></p>${skipLink(id)}`);
+      <p class="small"><button class="link" data-action="setupMcp">Other tools</button></p>${later}`);
     }
-    case 'first_spec':
-      return firstSpecStep(s, o, skipped);
+    case 'how_found': {
+      const choice = (h: { value: string; label: string }) =>
+        `<button class="btn small secondary" data-action="howFound" data-arg="${escapeHtml(h.value)}"${o.busy === 'how_found' ? ' disabled' : ''}>${escapeHtml(h.label)}</button>`;
+      const first = s.howFoundOptions.filter((h) => !h.more).map(choice).join('');
+      const more = s.howFoundOptions.filter((h) => h.more).map(choice).join('');
+      return step(id, stepDone('how_found', inputs), skipped, 'How did you find Rampify?', 'One tap. It helps us know where people like you hear about us.',
+        `<div class="choices">${first}</div>${more ? `
+      <p class="small"><button class="link" data-toggle="how-found-more">More\u2026</button></p>
+      <div id="how-found-more" class="choices" hidden>${more}</div>` : ''}${err}${skipLink(id)}`);
+    }
   }
 }
 
-const TOOL_TILES: { tool: SetupSnapshot['aiTool']; label: string; hint: string }[] = [
-  { tool: 'copilot', label: 'GitHub Copilot', hint: 'in VS Code' },
-  { tool: 'cursor', label: 'Cursor', hint: 'Cursor\u2019s agent' },
-  { tool: 'claude', label: 'Claude Code', hint: 'terminal or extension' },
-];
+const TOOL_TILES: Record<AiTool, { label: string; hint: string }> = {
+  copilot: { label: 'GitHub Copilot', hint: 'in VS Code' },
+  cursor: { label: 'Cursor', hint: 'Cursor\u2019s agent' },
+  claude: { label: 'Claude Code', hint: 'terminal or extension' },
+};
 
-/** One click per tool, the editor's own (or the one already chosen) first. */
+/** The tools offered for each editor; the rest are under "Other tools". */
+const TILES_BY_EDITOR: Record<EditorKind, readonly AiTool[]> = {
+  vscode: ['copilot', 'claude'],
+  cursor: ['cursor', 'claude'],
+  other: ['claude'],
+};
+
+/** One click per tool this editor can use, its own first. Copilot only where it can connect. */
 function toolTiles(s: SetupSnapshot): string {
-  const tiles = [...TOOL_TILES].sort((a, b) => (a.tool === s.aiTool ? -1 : b.tool === s.aiTool ? 1 : 0));
-  return `<div class="tiles">${tiles.map((t, i) =>
-    `<button class="btn small tile${i === 0 ? '' : ' secondary'}" data-action="connectTool" data-arg="${t.tool}">${t.label}<span>${t.hint}</span></button>`
-  ).join('')}</div>`;
+  const tools = TILES_BY_EDITOR[s.editor].filter((t) => t !== 'copilot' || s.copilotReady);
+  return `<div class="tiles">${tools.map((tool, i) => {
+    const t = TOOL_TILES[tool];
+    return `<button class="btn small tile${i === 0 ? '' : ' secondary'}" data-action="connectTool" data-arg="${tool}">${t.label}<span>${t.hint}</span></button>`;
+  }).join('')}</div>`;
 }
 
 /**
- * "Your first spec": Rampify creates a getting-started spec, the user's AI
- * works through it (tasks tick off here), and writes a spec for whatever the
- * user is working on, which gets a Start Building button.
+ * After picking a tool, two stages (spec b312544f). First connect: start
+ * Rampify in the tool and sign in. Only once the server says the tool reached
+ * Rampify (onboarding's AI-tool fact) does the first prompt unlock, so it
+ * never goes to an agent without Rampify's tools (that agent improvises: it
+ * read the open folder's code instead, 2026-10-26).
  */
-function firstSpecStep(s: SetupSnapshot, o: HomeHtmlOptions, skipped: boolean) {
-  const gs = s.gettingStarted;
-  const done = stepDone('first_spec', s);
-  const tool = escapeHtml(s.aiToolLabel);
-  const busy = o.busy === 'first_spec';
-  const followUp = s.followUp
-    ? `<div class="callout"><span>Your spec is here: <b>${escapeHtml(s.followUp.title)}</b></span>
-      ${button('startBuilding', 'Start Building')}</div>`
-    : '';
+const NEXT_STEPS: Record<AiTool, {
+  connect: readonly string[];
+  connectAction: { action: string; label: string } | null;
+  send: { action: string; label: string; where: string };
+}> = {
+  copilot: {
+    connect: [
+      'Click <b>Start Rampify</b>. VS Code starts it and asks you to sign in.',
+      'Allow it and sign in to Rampify, choosing this project.',
+    ],
+    connectAction: { action: 'startCopilot', label: 'Start Rampify' },
+    send: { action: 'sendPrompt', label: 'Send First Prompt', where: 'It opens in Copilot Chat (Agent mode). Make sure Rampify is on in the chat\u2019s tools, then send it.' },
+  },
+  cursor: {
+    connect: [
+      'Enable the Rampify server when Cursor asks (or in Cursor Settings, MCP).',
+      'Sign in to Rampify when Cursor asks, choosing this project.',
+    ],
+    connectAction: null,
+    send: { action: 'sendPrompt', label: 'Send First Prompt', where: 'It opens in Cursor\u2019s agent chat. Send it there.' },
+  },
+  claude: {
+    connect: [
+      'Click <b>Open Claude Code</b>. It starts in a terminal in this folder.',
+      'Type <code>/mcp</code>, choose rampify, and sign in, choosing this project.',
+    ],
+    connectAction: { action: 'openClaudeCode', label: 'Open Claude Code' },
+    send: { action: 'copyPrompt', label: 'Copy First Prompt', where: `In Claude Code, type <code>${claudePromptCommand(GET_STARTED_PROMPT)}</code> (Rampify\u2019s own get-started prompt), or paste this and send it.` },
+  },
+};
 
-  if (!gs) {
-    const ask = s.hasCommits === false
-      ? `<label class="field">What are you building first?
-        <textarea id="spec-what" rows="2" placeholder="e.g. a habit tracker with reminders"></textarea></label>`
-      : '';
-    const needsTool = s.aiToolConnected === false && !s.mcpConfigured
-      ? '<p class="fine">Connect your AI tool first, so it can read the spec.</p>'
-      : '';
-    return step('first_spec', done, skipped, 'Your first spec',
-      `Rampify creates a getting-started spec and ${tool} works through it. Watch the tasks check off here.`,
-      `${ask}${needsTool}${button('startFirstSpec', busy ? 'Creating\u2026' : 'Start Your First Spec', busy)}${skipLink('first_spec')}`);
-  }
-
-  const tasks = `<ul class="tasks">${gs.tasks.map((t) => {
-    const ok = t.status === 'completed';
-    const now = t.status === 'in_progress';
-    return `<li class="${ok ? 'ok' : now ? 'now' : ''}"><i>${ok ? ICON.tick : now ? '\u2026' : ''}</i><span>${escapeHtml(t.title)}</span></li>`;
-  }).join('')}</ul>`;
-  if (done) {
-    return step('first_spec', true, false, 'Your first spec',
-      s.followUp ? `Your spec: <b>${escapeHtml(s.followUp.title)}</b> <button class="link inline" data-action="startBuilding">Start building</button>` : 'Done.',
-      '');
-  }
-  return step('first_spec', false, skipped, 'Your first spec',
-    `${tool} is working through <b>${escapeHtml(gs.title)}</b>.`,
-    `${tasks}${followUp}
-      <p class="small"><button class="link" data-action="startFirstSpec">Send it to ${tool} again</button></p>`,
-    '', true);
+/**
+ * The first prompt: the server's (lib/onboarding/first-prompt.ts). Older
+ * servers don't send it; this mirrors firstPrompt() exactly (a unit test
+ * keeps the two the same).
+ */
+export function firstPromptOf(s: SetupSnapshot): string {
+  if (s.firstPrompt) { return s.firstPrompt; }
+  const domain = s.project?.domain;
+  const what = domain ? `Set up ${domain} with Rampify` : 'Set up my project with Rampify';
+  return `${what}: call Rampify's suggest_next_action tool and follow what it returns, one step at a time, showing me anything before you save it. If you don't have Rampify's tools, stop and tell me to finish connecting Rampify.`;
 }
 
-function projectSummary(s: SetupSnapshot): string {
-  const p = s.project;
-  if (!p) { return ''; }
-  const name = escapeHtml(p.name ?? s.projectName ?? '');
-  if (p.type === 'app') { return `${name} \u00b7 App`; }
-  const where = p.startingPoint === 'live_site'
-    ? `live at ${escapeHtml(p.domain ?? '')}`
-    : p.startingPoint === 'domain_only' ? `${escapeHtml(p.domain ?? 'domain')}, not live yet` : 'not live yet';
-  return `${name} \u00b7 Website, ${where}`;
+function aiToolNextSteps(s: SetupSnapshot, tool: AiTool): string {
+  const n = NEXT_STEPS[tool];
+  const label = TOOL_TILES[tool].label;
+  const other = '<p class="small"><button class="link" data-action="chooseOtherTool">Use a different tool</button></p>';
+  // The fact isn't per tool: once any connection reaches this project, it
+  // counts (and the step says "connected" without naming which).
+  if (s.onboarding?.facts.aiTool !== 'connected') {
+    return `<ol class="howto">${n.connect.map((x) => `<li>${x}</li>`).join('')}</ol>
+      ${n.connectAction ? button(n.connectAction.action, n.connectAction.label) : ''}
+      <p class="status"><span class="spinner"></span>Waiting for ${label} to connect to Rampify\u2026 The first prompt unlocks here once it does.</p>
+      ${tool === 'copilot' ? '<p class="small">VS Code didn\u2019t ask you to sign in? <button class="link inline" data-action="openMcpServers">Open its MCP servers</button>, then start Rampify there.</p>' : ''}
+      ${other}`;
+  }
+  return `<p class="status">\u2713 Connected to Rampify. Now send it this first prompt:</p>
+      <div class="prompt">${escapeHtml(firstPromptOf(s))}</div>
+      ${button(n.send.action, n.send.label)}${n.send.action === 'copyPrompt' ? '' : ' <button class="btn small secondary" data-action="copyPrompt">Copy</button>'}
+      <p class="small">${n.send.where} This step ticks once it makes its first request.</p>
+      <p class="status"><span class="spinner"></span>Waiting for its first request.</p>
+      ${other}`;
 }
 
-function projectForm(s: SetupSnapshot, o: HomeHtmlOptions): string {
+function siteForm(s: SetupSnapshot, o: HomeHtmlOptions): string {
   const p = s.project;
   // No name yet: suggest a tidied folder name, selected so typing replaces it.
   const suggested = !p?.name;
   const name = escapeHtml(p?.name ?? tidyFolderName(s.folderName ?? ''));
-  const type = p?.type ?? 'website';
-  const sp = p?.startingPoint ?? '';
   const domain = escapeHtml(p?.domain ?? '');
-  const busy = o.busy === 'project';
-  const radio = (group: string, value: string, label: string, checked: boolean) =>
-    `<label class="choice"><input type="radio" name="${group}" value="${value}"${checked ? ' checked' : ''}> ${label}</label>`;
-  const unreachable = o.notice?.kind === 'unreachable'
-    ? `<div class="warn"><span>We couldn\u2019t reach ${escapeHtml(o.notice.domain)}. Is it live yet?</span>
-      <button class="btn small secondary" data-action="saveNotLive">Save as Not Live Yet</button>
-      <button class="link inline" data-action="saveAnyway">It\u2019s live, save anyway</button></div>`
-    : '';
+  const busy = o.busy === 'site';
   return `<form id="project-form" data-client="${escapeHtml(s.clientId ?? '')}">
-      <label class="field">Name<input name="name" value="${name}" maxlength="100" required${suggested ? ' data-suggested="1"' : ''}></label>
-      <p class="fine">How it\u2019ll appear in Rampify. You can rename it any time.</p>
-      <fieldset><legend>What is it?</legend>${radio('type', 'website', 'Website', type === 'website')}${radio('type', 'app', 'App', type === 'app')}</fieldset>
-      <fieldset class="site-q"><legend>Is your site live?</legend>
-        ${radio('sp', 'idea', 'Not yet, just building', sp === 'idea')}
-        ${radio('sp', 'domain_only', 'I have a domain, not live yet', sp === 'domain_only')}
-        ${radio('sp', 'live_site', 'It\u2019s live', sp === 'live_site')}
-      </fieldset>
-      <label class="field url">Site<input name="domain" value="${domain}" placeholder="example.com" autocomplete="off"></label>
+      <label class="field url">Website address<input name="domain" value="${domain}" placeholder="yourcompany.com" autocomplete="off"></label>
+      <label class="field">Project name<input name="name" value="${name}" maxlength="100"${suggested ? ' data-suggested="1"' : ''}></label>
+      <p class="fine">You can rename it any time.</p>
       <p class="error" id="form-error" hidden></p>
-      ${unreachable}
-      <button type="submit" class="btn small"${busy ? ' disabled' : ''}>${busy ? 'Saving\u2026' : 'Save'}</button>
-      ${o.editingProject ? '<button type="button" class="link inline" data-action="cancelEdit">Cancel</button>' : skipLink('project', true)}
+      <button type="submit" class="btn small"${busy ? ' disabled' : ''}>${busy ? 'Saving\u2026' : 'Save and Scan'}</button>
+      ${o.editingProject ? '<button type="button" class="link inline" data-action="cancelEdit">Cancel</button>' : ''}
     </form>`;
 }
 
@@ -294,13 +352,16 @@ function prop(icon: string, title: string, text: string): string {
 function step(
   id: SidebarStep | 'connected', done: boolean, skipped: boolean, title: string, text: string, action: string,
   titleExtra = '',
-  /** Something is happening here (a scan, the AI working a spec): keep it open even if it isn't next. */
+  /**
+   * Something is happening here or needs a look (a scan running or failed, the
+   * AI working a spec): keep it open even if it isn't next, or is done.
+   */
   active = false
 ) {
   return {
     id,
     done,
-    active: active && !done,
+    active,
     skipped: skipped && !done,
     render: (isNext: boolean) => {
       const state = done && !isNext ? 'done' : skipped && !done ? 'skipped' : isNext ? 'next' : '';
@@ -310,7 +371,8 @@ function step(
     <div>
       <b>${title}${titleExtra ? ` ${titleExtra}` : ''}</b>
       ${state === 'skipped'
-        ? `<span>Skipped \u00b7 <button class="link inline" data-action="unskip" data-arg="${id}">Undo</button></span>`
+        // "How did you find us" can't be un-skipped: skipping records that they were asked.
+        ? `<span>Skipped${id === 'how_found' ? '' : ` \u00b7 <button class="link inline" data-action="unskip" data-arg="${id}">Undo</button>`}</span>`
         : done && !isNext ? (text ? `<span>${text}</span>` : '') : text ? `<span>${text}</span>` : ''}
       ${isNext && action ? action : ''}
     </div>
@@ -349,28 +411,14 @@ const SCRIPT = `
 const vscode = acquireVsCodeApi();
 const saved = vscode.getState() || {};
 const form = document.getElementById('project-form');
-const specWhat = document.getElementById('spec-what');
 
-function syncForm() {
-  if (!form) { return; }
-  const type = form.querySelector('input[name=type]:checked')?.value;
-  const sp = form.querySelector('input[name=sp]:checked')?.value;
-  form.querySelector('.site-q').hidden = type !== 'website';
-  form.querySelector('.url').hidden = type !== 'website' || !(sp === 'domain_only' || sp === 'live_site');
-}
 function formData() {
   const get = (n) => form.querySelector('[name=' + n + ']');
-  return {
-    name: get('name').value.trim(),
-    type: form.querySelector('input[name=type]:checked')?.value,
-    sp: form.querySelector('input[name=sp]:checked')?.value || null,
-    domain: get('domain').value.trim(),
-  };
+  return { name: get('name').value.trim(), domain: get('domain').value.trim() };
 }
 function persist() {
   const state = { client: form?.dataset.client };
   if (form) { state.form = formData(); }
-  if (specWhat) { state.specWhat = specWhat.value; }
   vscode.setState(state);
 }
 
@@ -378,29 +426,21 @@ if (form && saved.form && saved.client === form.dataset.client) {
   const f = saved.form;
   form.querySelector('[name=name]').value = f.name || '';
   form.querySelector('[name=domain]').value = f.domain || '';
-  for (const [group, value] of [['type', f.type], ['sp', f.sp]]) {
-    const el = value && form.querySelector('input[name=' + group + '][value=' + value + ']');
-    if (el) { el.checked = true; }
-  }
 }
-if (specWhat && saved.specWhat) { specWhat.value = saved.specWhat; }
-syncForm();
-// A suggested (folder) name is selected so typing replaces it.
-const nameInput = form && form.querySelector('[name=name][data-suggested]');
-if (nameInput && !(saved.form && saved.client === form.dataset.client)) { nameInput.focus(); nameInput.select(); }
+// The site is saved: forget what was typed, so "Change" opens on the saved site.
+if (!form && saved.form && document.querySelector('[data-site-saved]')) { persist(); }
+// An empty site field gets the focus.
+const siteInput = form && form.querySelector('[name=domain]');
+if (siteInput && !siteInput.value && !(saved.form && saved.client === form.dataset.client)) { siteInput.focus(); }
 
-document.addEventListener('input', () => { syncForm(); persist(); });
-document.addEventListener('change', () => { syncForm(); persist(); });
+document.addEventListener('input', () => { persist(); });
+document.addEventListener('change', () => { persist(); });
 
 form?.addEventListener('submit', (e) => {
   e.preventDefault();
   const d = formData();
   const err = document.getElementById('form-error');
-  const needsSite = d.type === 'website' && (d.sp === 'domain_only' || d.sp === 'live_site');
-  const problem = !d.name ? 'Give the project a name.'
-    : d.type === 'website' && !d.sp ? 'Choose whether your site is live.'
-    : needsSite && !d.domain ? 'Add your site\\u2019s address, e.g. example.com.'
-    : '';
+  const problem = !d.domain ? 'Add your site\\u2019s address, e.g. example.com.' : '';
   err.hidden = !problem;
   err.textContent = problem;
   if (!problem) { vscode.postMessage({ action: 'saveProject', data: d }); }
@@ -416,8 +456,6 @@ document.addEventListener('click', (e) => {
   const el = e.target.closest('[data-action]');
   if (!el) { return; }
   const msg = { action: el.dataset.action, arg: el.dataset.arg };
-  if (msg.action === 'startFirstSpec') { msg.arg = specWhat ? specWhat.value : ''; }
-  if (msg.action === 'saveNotLive' || msg.action === 'saveAnyway') { msg.data = formData(); }
   vscode.postMessage(msg);
 });
 `;
@@ -481,6 +519,12 @@ form .btn.small { margin-top: 10px; }
 .btn[disabled] { opacity: .6; cursor: default; }
 .fine { margin: 4px 0 0; font-size: 12px; color: var(--vscode-descriptionForeground); }
 .tiles { display: grid; gap: 6px; margin-top: 8px; }
+.spinner { display: inline-block; width: 12px; height: 12px; margin-right: 8px; vertical-align: -2px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: spin 0.8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.prompt { margin: 8px 0; padding: 8px; border-radius: 4px; background: var(--vscode-textCodeBlock-background); font-size: 12px; line-height: 1.4; white-space: pre-wrap; }
+.status { display: flex; align-items: center; margin-top: 8px; font-size: 12px; color: var(--vscode-descriptionForeground); }
+ol.howto { margin: 6px 0 0; padding-left: 18px; font-size: 12px; }
+.choices { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 .btn.tile { display: flex; justify-content: space-between; align-items: baseline; width: 100%; margin: 0; text-align: left; }
 .btn.tile span { font-size: 11px; font-weight: 400; opacity: .8; }
 .callout { display: grid; gap: 4px; margin: 10px 0 0; padding: 8px; border-radius: 4px; border: 1px solid var(--accent); }

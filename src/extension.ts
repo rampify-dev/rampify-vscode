@@ -13,7 +13,7 @@ import { primaryProject, projectDisplayName } from './utils/project-display';
 // (tests/unit/vscode-rules-template-sync.test.ts) fails if the copies drift.
 import rulesTemplate from './templates/rampify-rules.md';
 import { Session } from './auth/session';
-import { RampifyOAuth, SignInCancelled } from './auth/oauth';
+import { RampifyOAuth, SignInCancelled, type SignInResult } from './auth/oauth';
 import { SetupState } from './views/setup-state';
 import { HomeViewProvider } from './views/home-view';
 import {
@@ -49,7 +49,7 @@ export async function activate(context: vscode.ExtensionContext) {
   // Credentials live in SecretStorage, per linked project (see auth/session.ts).
   session = await Session.create(context.secrets, getProjectConfig()?.clientId);
   context.subscriptions.push(session);
-  oauth = new RampifyOAuth(context.globalState, context.globalStorageUri.fsPath);
+  oauth = new RampifyOAuth(context.globalState, context.globalStorageUri.fsPath, context.secrets);
   // <scheme>://rampify.rampify/auth-callback → sign-in; /open → the setup
   // wizard's "Back to <editor>" button: refresh the checklist and show it.
   context.subscriptions.push(vscode.window.registerUriHandler({
@@ -68,10 +68,12 @@ export async function activate(context: vscode.ExtensionContext) {
 
   // Home panel: signed-out pitch + setup checklist, until the project has specs.
   setupState = new SetupState(() => apiClient, session, context.workspaceState);
+  // The panel shows a sign-in's progress (waiting on the browser, finishing).
+  oauth.onPhase = (phase) => setupState.setSignInPhase(phase);
   context.subscriptions.push(setupState);
   // Copilot connects through VS Code's MCP provider API (no config file),
   // pinned to this folder's project. Other tools get pinned in-folder files.
-  copilotMcp = new CopilotMcpProvider(context.workspaceState, getMcpUrl, () => getProjectConfig()?.clientId ?? null);
+  copilotMcp = new CopilotMcpProvider(context.workspaceState, getMcpUrl, () => getProjectConfig()?.clientId ?? null, () => session.apiKey || undefined);
   context.subscriptions.push(copilotMcp);
   const linkedProject = getProjectConfig()?.clientId;
   if (linkedProject) { syncPinnedConfigs(getMcpUrl(), linkedProject); }
@@ -176,7 +178,8 @@ export async function activate(context: vscode.ExtensionContext) {
 
   // Title-bar ⋯ menu and Home panel actions (spec a3f4b733).
   context.subscriptions.push(
-    vscode.commands.registerCommand('rampify.connectAiTool', (tool: AiTool) => connectAiTool(tool)),
+    vscode.commands.registerCommand('rampify.connectAiTool', (tool: AiTool, opts?: { quiet?: boolean }) => connectAiTool(tool, opts)),
+    vscode.commands.registerCommand('rampify.cancelSignIn', () => oauth.cancel()),
     vscode.commands.registerCommand('rampify.renameProject', () => renameProject()),
     vscode.commands.registerCommand('rampify.openDashboard', () => {
       const clientId = getProjectConfig()?.clientId;
@@ -205,6 +208,8 @@ export async function activate(context: vscode.ExtensionContext) {
   // Key changed (sign-in, sign-out, another window): rebuild the client.
   context.subscriptions.push(
     session.onDidChange(() => {
+      // Copilot connects with the session's key: a sign-in or sign-out changes it.
+      copilotMcp.signInChanged(context.extension.id);
       apiClient = createApiClient();
       updateOnboardingContext();
       featureSpecsProvider.refresh({ background: true });
@@ -220,6 +225,8 @@ export async function activate(context: vscode.ExtensionContext) {
         'Disconnect'
       );
       if (confirm === 'Disconnect') {
+        // A sign-in still waiting on the browser would sign them back in.
+        oauth.cancel();
         const config = vscode.workspace.getConfiguration('rampify');
         await session.clear();
         if (vscode.workspace.workspaceFolders?.length) {
@@ -364,6 +371,14 @@ export async function activate(context: vscode.ExtensionContext) {
   updateOnboardingContext();
   context.subscriptions.push(vscode.workspace.onDidChangeWorkspaceFolders(() => setupState.refresh({ background: true })));
   setupState.refresh({ background: true });
+
+  // A browser sign-in this folder started before the window reloaded can
+  // still finish (spec 78417623).
+  const resumeRun = ++signInRun;
+  oauth.resume()
+    .then((result) => result && finishSignIn(result))
+    .catch((err) => reportSignInFailure(err))
+    .finally(() => { if (resumeRun === signInRun) { setupState.setSignInPhase('idle'); } });
 }
 
 export function deactivate() {
@@ -454,24 +469,37 @@ async function signInWithRampify(opts: { withCode?: boolean } = {}): Promise<voi
     return;
   }
 
-  let result;
+  const run = ++signInRun;
   try {
-    result = opts.withCode ? await oauth.signInWithCode(getWebUrl()) : await oauth.signIn(getWebUrl());
+    const result = opts.withCode ? await oauth.signInWithCode(getWebUrl()) : await oauth.signIn(getWebUrl());
+    await finishSignIn(result);
   } catch (err) {
-    if (err instanceof SignInCancelled) { return; }
-    // Usually the browser step was abandoned or timed out; offer the retry
-    // (quick if they're now signed in on the web) and the code flow.
-    vscode.window.showErrorMessage(
-      `Rampify sign-in didn't finish: ${err instanceof Error ? err.message : String(err)}`,
-      'Try Again',
-      'Sign In with a Code'
-    ).then((action) => {
-      if (action === 'Try Again') { signInWithRampify(opts); }
-      if (action === 'Sign In with a Code') { signInWithRampify({ withCode: true }); }
-    });
-    return;
+    reportSignInFailure(err, opts);
+  } finally {
+    // A sign-in started meanwhile (a code sign-in replacing this one) owns the panel now.
+    if (run === signInRun) { setupState.setSignInPhase('idle'); }
   }
+}
 
+/** Counts sign-ins, so only the latest one clears the panel's progress. */
+let signInRun = 0;
+
+function reportSignInFailure(err: unknown, opts: { withCode?: boolean } = {}): void {
+  if (err instanceof SignInCancelled) { return; }
+  // Usually the browser step was abandoned or timed out; offer the retry
+  // (quick if they're now signed in on the web) and the code flow.
+  vscode.window.showErrorMessage(
+    `Rampify sign-in didn't finish: ${err instanceof Error ? err.message : String(err)}`,
+    'Try Again',
+    'Sign In with a Code'
+  ).then((action) => {
+    if (action === 'Try Again') { signInWithRampify(opts); }
+    if (action === 'Sign In with a Code') { signInWithRampify({ withCode: true }); }
+  });
+}
+
+/** Link this folder to the project the sign-in chose (a browser, code, or resumed sign-in). */
+async function finishSignIn(result: SignInResult): Promise<void> {
   // The token can see only the chosen project; find its workspace to link.
   const scoped = new RampifyApiClient({
     apiKey: result.accessToken,
@@ -500,7 +528,8 @@ async function signInWithRampify(opts: { withCode?: boolean } = {}): Promise<voi
   featureSpecsProvider.refresh();
   // A newly linked project starts on its checklist (or its specs, if it has some).
   await setupState.showView(null);
-  await setupState.refresh();
+  // Fresh: a load the session change started may predate the folder's link.
+  await setupState.refresh({ fresh: true });
   vscode.commands.executeCommand(setupState.currentView === 'specs' ? 'rampify.featureSpecs.focus' : 'rampify.home.focus');
   vscode.window.showInformationMessage(`Signed in to Rampify. This folder is linked to "${projectDisplayName(workspace)}".`);
 }
@@ -851,7 +880,8 @@ async function installMcpServer(): Promise<void> {
  * VS Code's provider API (or .vscode/mcp.json), Cursor via .cursor/mcp.json,
  * Claude Code via .mcp.json. Each signs in to Rampify on first use.
  */
-async function connectAiTool(tool: AiTool): Promise<void> {
+/** Connect an AI tool to this folder's project. `quiet`: the panel shows the next steps itself. */
+async function connectAiTool(tool: AiTool, opts: { quiet?: boolean } = {}): Promise<void> {
   if (!vscode.workspace.workspaceFolders?.length) {
     await openProjectFolder({});
     return;
@@ -866,32 +896,38 @@ async function connectAiTool(tool: AiTool): Promise<void> {
   try {
     if (tool === 'copilot' && copilotMcp.available) {
       await copilotMcp.enable();
-      vscode.window.showInformationMessage(
-        'Rampify is connected to Copilot for this folder. In Copilot Chat (Agent mode), VS Code asks you to sign in to Rampify the first time.',
-        'Open Copilot Chat'
-      ).then((action) => {
-        if (action) { vscode.commands.executeCommand('workbench.action.chat.open', { mode: 'agent' }); }
-      });
+      // Start it, so VS Code asks to sign in now rather than never.
+      copilotMcp.start(extContext.extension.id);
+      if (!opts.quiet) {
+        vscode.window.showInformationMessage(
+          'Rampify is connected to Copilot for this folder. In Copilot Chat (Agent mode), VS Code asks you to sign in to Rampify the first time.',
+          'Open Copilot Chat'
+        ).then((action) => {
+          if (action) { vscode.commands.executeCommand('workbench.action.chat.open', { mode: 'agent' }); }
+        });
+      }
     } else {
       const file = writePinnedConfig(tool, getMcpUrl(), pin);
       if (tool === 'claude') {
         await scaffoldClaudeRulesFile();
-        vscode.window.showInformationMessage(
-          `Rampify added to ${file}. Open Claude Code in this folder and type /mcp to sign in.`,
-          'Open Claude Code'
-        ).then((action) => {
-          if (!action) { return; }
-          const terminal = vscode.window.createTerminal({ name: 'Claude Code', cwd: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath });
-          terminal.show();
-          terminal.sendText('claude', true);
-        });
-      } else {
+        if (!opts.quiet) {
+          vscode.window.showInformationMessage(
+            `Rampify added to ${file}. Open Claude Code in this folder and type /mcp to sign in.`,
+            'Open Claude Code'
+          ).then((action) => {
+            if (!action) { return; }
+            const terminal = vscode.window.createTerminal({ name: 'Claude Code', cwd: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath });
+            terminal.show();
+            terminal.sendText('claude', true);
+          });
+        }
+      } else if (!opts.quiet) {
         vscode.window.showInformationMessage(tool === 'cursor'
           ? `Rampify added to ${file}. Cursor asks to enable it; then sign in to Rampify when prompted.`
           : `Rampify added to ${file}. Start it from the MCP view and sign in when VS Code asks.`);
       }
     }
-    await rememberAiTool(extContext.workspaceState, tool);
+    await rememberAiTool(extContext.workspaceState, tool, pin);
     await setupState.markMcpSetupDone();
   } catch (err) {
     vscode.window.showErrorMessage(`Couldn't connect ${AI_TOOL_LABELS[tool]}: ${err instanceof Error ? err.message : String(err)}`);

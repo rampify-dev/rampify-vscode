@@ -2,6 +2,17 @@
 
 All notable changes to the Rampify VS Code extension will be documented in this file.
 
+## [0.12.0] - 2026-10-26
+
+### Changed
+- The Home panel is Rampify's setup checklist, the same steps as the web and your AI tool: add your website, connect your AI tool, Search Console (optional), and how you found Rampify. One step is open at a time, and a scan that didn't finish says why
+- Connecting GitHub Copilot uses the extension's own sign-in: no second sign-in in the browser. Claude Code and Cursor get step-by-step instructions in the panel, and the first prompt unlocks once your AI tool reaches Rampify
+- Each project gets its own Rampify server address, so AI tools keep a separate sign-in per project
+- Signing in shows its progress in the panel, finishes even if the browser step takes a while (or the window reloads), and the checklist loads faster
+
+### Fixed
+- Connecting Search Console from the panel returns to the right page
+
 ## [0.11.0] - 2026-10-21
 
 ### Changed

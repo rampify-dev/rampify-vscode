@@ -19,11 +19,18 @@ import * as path from 'path';
  *   claude   .mcp.json at the folder root (Claude Code's project scope)
  */
 
-export type AiTool = 'copilot' | 'cursor' | 'claude';
+import type { AiTool, EditorKind } from '../views/setup-snapshot';
+import { COPILOT_SERVER_LABEL, SERVER_NAME } from './prompt-names';
+export type { AiTool };
 
-export const SERVER_NAME = 'rampify';
+export { SERVER_NAME };
 export const PIN_HEADER = 'X-Rampify-Project';
 const TOOL_KEY = 'rampify.aiTool';
+/**
+ * The tool picked in the panel, per project: a folder relinked to another
+ * project (or account) starts the AI-tool step from the choice again.
+ */
+const PICKED_KEY = 'rampify.aiToolPicked';
 const COPILOT_KEY = 'rampify.copilotMcp';
 
 export const AI_TOOL_LABELS: Record<AiTool, string> = {
@@ -44,7 +51,27 @@ export function chosenAiTool(state: vscode.Memento): AiTool {
   return state.get<AiTool>(TOOL_KEY) ?? defaultAiTool();
 }
 
+/** The editor we're running in (the AI tools offered first follow it). */
+export function editorKind(): EditorKind {
+  const tool = defaultAiTool();
+  return tool === 'copilot' ? 'vscode' : tool === 'cursor' ? 'cursor' : 'other';
+}
+
+/** The tool connected from the panel in this folder, if one was. */
+export function pickedAiTool(state: vscode.Memento, clientId: string | null): AiTool | null {
+  return clientId ? state.get<AiTool>(`${PICKED_KEY}.${clientId}`) ?? null : null;
+}
+
+/** "Use a different tool": back to the choice. */
+export async function forgetAiTool(state: vscode.Memento, clientId: string | null): Promise<void> {
+  if (clientId) { await state.update(`${PICKED_KEY}.${clientId}`, undefined); }
+}
+
 /** VS Code's MCP provider API exists here (VS Code 1.101+, not Cursor's fork of it). */
+export function copilotMcpSupported(): boolean {
+  return canUseProvider();
+}
+
 function canUseProvider(): boolean {
   const lm = (vscode as unknown as { lm?: { registerMcpServerDefinitionProvider?: unknown } }).lm;
   return typeof lm?.registerMcpServerDefinitionProvider === 'function' && defaultAiTool() === 'copilot';
@@ -61,10 +88,20 @@ const CONFIG_FILES: Record<AiTool, { file: string[]; key: 'servers' | 'mcpServer
   claude: { file: ['.mcp.json'], key: 'mcpServers' },
 };
 
+/**
+ * The project's own MCP address (spec efb05ccf): AI tools keep one sign-in
+ * per address, so each project gets its own (one shared address let a sign-in
+ * for one project serve every folder). The pin header stays as well.
+ */
+export function projectMcpUrl(mcpUrl: string, pin: string): string {
+  return `${mcpUrl.replace(/\/+$/, '')}/p/${pin}`;
+}
+
 function entryFor(tool: AiTool, mcpUrl: string, pin: string): Record<string, unknown> {
   const headers = { [PIN_HEADER]: pin };
+  const url = projectMcpUrl(mcpUrl, pin);
   // VS Code and Claude Code want an explicit type; Cursor infers it from url.
-  return tool === 'cursor' ? { url: mcpUrl, headers } : { type: 'http', url: mcpUrl, headers };
+  return tool === 'cursor' ? { url, headers } : { type: 'http', url, headers };
 }
 
 function readJson(file: string): Record<string, unknown> | null {
@@ -126,6 +163,14 @@ export function syncPinnedConfigs(mcpUrl: string, pin: string): void {
 }
 
 /**
+ * VS Code's id for a server an extension provides: the extension id
+ * (lowercased) and the server's label (VS Code's extHostMcp, 1.143).
+ */
+export function copilotServerId(extensionId: string): string {
+  return `${extensionId.toLowerCase()}/${COPILOT_SERVER_LABEL}`;
+}
+
+/**
  * Copilot without a config file: Rampify contributes its MCP server through
  * VS Code's provider API once the user connects, pinned to the linked project.
  */
@@ -136,7 +181,13 @@ export class CopilotMcpProvider implements vscode.Disposable {
   constructor(
     private readonly state: vscode.Memento,
     private readonly getMcpUrl: () => string,
-    private readonly getPin: () => string | null
+    private readonly getPin: () => string | null,
+    /**
+     * The extension's own Rampify key (SecretStorage, scoped to this folder's
+     * project): Copilot connects with it, so there's no second sign-in in the
+     * browser (spec 22941412). Added only when VS Code starts the server.
+     */
+    private readonly getToken: () => string | undefined = () => undefined
   ) {
     if (!canUseProvider()) { return; }
     const lm = (vscode as unknown as {
@@ -150,7 +201,15 @@ export class CopilotMcpProvider implements vscode.Disposable {
       provideMcpServerDefinitions: () => {
         const pin = this.getPin();
         if (!this.enabled || !pin) { return []; }
-        return [new Def('Rampify', vscode.Uri.parse(this.getMcpUrl()), { [PIN_HEADER]: pin })];
+        return [new Def(COPILOT_SERVER_LABEL, vscode.Uri.parse(projectMcpUrl(this.getMcpUrl(), pin)), { [PIN_HEADER]: pin })];
+      },
+      // When VS Code starts the server: the extension's key, so it isn't in
+      // the definition VS Code lists or caches. Without one (signed out),
+      // VS Code falls back to its own sign-in, as before.
+      resolveMcpServerDefinition: (server: { headers?: Record<string, string> }) => {
+        const token = this.getToken();
+        if (token) { server.headers = { ...(server.headers ?? {}), Authorization: `Bearer ${token}` }; }
+        return server;
       },
     });
   }
@@ -168,9 +227,49 @@ export class CopilotMcpProvider implements vscode.Disposable {
     this.changed.fire();
   }
 
+  /**
+   * Start the server in VS Code, which is when VS Code asks the user to sign
+   * in to Rampify. Defining it isn't enough: VS Code leaves an extension's
+   * server stopped until something starts it, so Copilot had no Rampify tools
+   * and nothing asked to sign in (2026-10-26). Not awaited past the request:
+   * starting waits on the sign-in.
+   *
+   * VS Code picks up a new definition asynchronously, and starting a server
+   * it doesn't know yet does nothing (without an error), so it's tried again
+   * a little later; starting one that's running or starting is a no-op. The
+   * panel also offers VS Code's own MCP server list as a way out.
+   */
+  start(extensionId: string): void {
+    const id = copilotServerId(extensionId);
+    for (const delay of [750, 3000]) {
+      setTimeout(() => {
+        Promise.resolve(vscode.commands.executeCommand('workbench.mcp.startServer', id, { promptType: 'all-untrusted' }))
+          .catch((err) => console.warn('[rampify] could not start the MCP server in VS Code:', err));
+      }, delay);
+    }
+  }
+
   /** The linked project changed: re-provide with the new pin. */
   refresh(): void {
     this.changed.fire();
+  }
+
+  /**
+   * The extension's sign-in changed: restart a running server so it connects
+   * with the new key now. Otherwise a server started a moment before the
+   * sign-in finished keeps going without one, and VS Code asks for its own
+   * sign-in in the browser (founder test, 2026-10-26).
+   */
+  signInChanged(extensionId: string): void {
+    this.changed.fire();
+    if (!this.enabled || !this.getToken()) { return; }
+    // Stop, then start (VS Code's restart command also opens the output panel).
+    const id = copilotServerId(extensionId);
+    setTimeout(() => {
+      Promise.resolve(vscode.commands.executeCommand('workbench.mcp.stopServer', id))
+        .then(() => vscode.commands.executeCommand('workbench.mcp.startServer', id, { promptType: 'all-untrusted' }))
+        .then(undefined, (err) => console.warn('[rampify] could not restart the MCP server in VS Code:', err));
+    }, 750);
   }
 
   dispose(): void {
@@ -180,8 +279,9 @@ export class CopilotMcpProvider implements vscode.Disposable {
 }
 
 /** Remember which tool the user connected (prompts go there). */
-export async function rememberAiTool(state: vscode.Memento, tool: AiTool): Promise<void> {
+export async function rememberAiTool(state: vscode.Memento, tool: AiTool, clientId?: string): Promise<void> {
   await state.update(TOOL_KEY, tool);
+  if (clientId) { await state.update(`${PICKED_KEY}.${clientId}`, tool); }
 }
 
 /**
@@ -189,11 +289,12 @@ export async function rememberAiTool(state: vscode.Memento, tool: AiTool): Promi
  * (deeplink, prefilled), or a Claude Code session in a terminal. The prompt is
  * also copied, in case the tool didn't open.
  */
-export async function sendToAiTool(tool: AiTool, prompt: string): Promise<void> {
+export async function sendToAiTool(tool: AiTool, prompt: string, opts: { submit?: boolean } = {}): Promise<void> {
   await vscode.env.clipboard.writeText(prompt);
   try {
     if (tool === 'copilot') {
-      await vscode.commands.executeCommand('workbench.action.chat.open', { query: prompt, mode: 'agent' });
+      // submit: false leaves it in the box (the user signs in to Rampify first).
+      await vscode.commands.executeCommand('workbench.action.chat.open', { query: prompt, mode: 'agent', isPartialQuery: opts.submit === false });
     } else if (tool === 'cursor') {
       await vscode.env.openExternal(vscode.Uri.parse(
         `cursor://anysphere.cursor-deeplink/prompt?text=${encodeURIComponent(prompt)}`
@@ -206,6 +307,18 @@ export async function sendToAiTool(tool: AiTool, prompt: string): Promise<void> 
   } catch {
     vscode.window.showInformationMessage(`Couldn't open ${AI_TOOL_LABELS[tool]}. The prompt is copied: paste it into your AI chat.`);
   }
+}
+
+/**
+ * Start the first prompt in the AI tool: the server's text (setup-advance's
+ * first_prompt, the same text as the get_started MCP prompt), left in the box.
+ * Not the /mcp.Rampify.get_started slash command: when Rampify isn't on in
+ * that chat, VS Code sends the command as literal text (founder test,
+ * 2026-10-26), while the text still tells an agent without Rampify to stop
+ * and say so.
+ */
+export async function sendFirstPrompt(tool: AiTool, text: string): Promise<void> {
+  await sendToAiTool(tool, text, { submit: false });
 }
 
 function shellQuote(s: string): string {

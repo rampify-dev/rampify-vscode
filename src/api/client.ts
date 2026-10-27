@@ -1,5 +1,5 @@
 import axios, { AxiosInstance, AxiosError } from 'axios';
-import type { ProjectType, StartingPoint } from '../views/setup-steps';
+import type { OnboardingState } from '../views/setup-steps';
 import * as vscode from 'vscode';
 import {
   Client,
@@ -201,8 +201,8 @@ export class RampifyApiClient {
   }
 
   /**
-   * Save the sidebar's project answers (PATCH /sites/:id). Failures come back
-   * as values: `unreachable` when a site saved as live didn't answer.
+   * Save the sidebar's site and name (PATCH /sites/:id). Failures come back
+   * as values.
    */
   async updateProject(siteId: string, body: ProjectUpdate): Promise<ProjectUpdateResult> {
     try {
@@ -211,7 +211,27 @@ export class RampifyApiClient {
     } catch (error) {
       const data = (axios.isAxiosError(error) ? error.response?.data : undefined) as ApiError & { code?: string } | undefined;
       const message = data?.error || (error instanceof Error ? error.message : 'Could not save the project.');
-      return { ok: false, unreachable: data?.code === 'site_unreachable', message };
+      return { ok: false, message };
+    }
+  }
+
+  /** Skip (or un-skip) an optional onboarding step, on the server so every surface sees it. */
+  async setOnboardingStepSkipped(siteId: string, step: string, skipped: boolean): Promise<boolean> {
+    try {
+      await this.axios.post(`/sites/${siteId}/setup-advance`, { action: 'skip_step', step, skipped }, { rampifySilent: true });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /** Answer "how did you find us" (null: skip it). The same answer the web setup records. */
+  async saveHowFound(value: string | null): Promise<boolean> {
+    try {
+      await this.axios.post('/me/onboarding', value ? { how_found_us: value } : {}, { rampifySilent: true });
+      return true;
+    } catch {
+      return false;
     }
   }
 
@@ -245,6 +265,8 @@ export class RampifyApiClient {
       await this.axios.post(`/sites/${siteId}/analyze/trigger`, { include_url_health: true }, { rampifySilent: true });
       return { ok: true };
     } catch (error) {
+      // A scan already running counts as started (as on the web).
+      if (axios.isAxiosError(error) && error.response?.status === 409) { return { ok: true }; }
       const data = (axios.isAxiosError(error) ? error.response?.data : undefined) as ApiError | undefined;
       return { ok: false, message: data?.error || 'Could not start the scan.' };
     }
@@ -319,10 +341,16 @@ export interface ProjectSetup {
   bootstrap_phase: string | null;
   has_crawled_urls: boolean;
   gsc: { connected: boolean; has_property: boolean };
+  /** The one onboarding state (spec 724f9f24); absent on older servers. */
+  onboarding?: OnboardingState;
+  /** "How did you find us" answers, the same as web setup's. */
+  how_found_options?: { value: string; label: string; more?: boolean }[];
+  /** Why the last scan failed, when it did (lib/scans/failure.ts on the server). */
+  scan_failure?: { kind: string; summary: string; nextStep: string; helpUrl: string | null } | null;
+  /** What to ask the AI tool first (lib/onboarding/first-prompt.ts). */
+  first_prompt?: string;
   project: {
     domain: string | null;
-    project_type: ProjectType | null;
-    starting_point: StartingPoint | null;
     name: string | null;
     brand_name: string | null;
   };
@@ -331,14 +359,10 @@ export interface ProjectSetup {
 export interface ProjectUpdate {
   name?: string;
   domain?: string;
-  project_type?: ProjectType;
-  starting_point?: StartingPoint;
-  verify_live?: boolean;
-  advance_wizard?: boolean;
   editor?: string;
 }
 
-export type ProjectUpdateResult = { ok: true } | { ok: false; unreachable: boolean; message: string };
+export type ProjectUpdateResult = { ok: true } | { ok: false; message: string };
 
 /** GET /sites/:id/getting-started. */
 export interface GettingStartedState {

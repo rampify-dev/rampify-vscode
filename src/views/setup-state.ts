@@ -2,69 +2,34 @@ import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { RampifyApiClient } from '../api/client';
+import { RampifyApiClient, type ProjectSetup } from '../api/client';
 import { Session } from '../auth/session';
 import { getProjectConfig } from '../utils/project-config';
 import { projectDisplayName, primaryProject } from '../utils/project-display';
 import { execFile } from 'child_process';
-import { projectAnswered, sidebarSteps, stepDone, type ProjectType, type SidebarStep, type StartingPoint } from './setup-steps';
-import { AI_TOOL_LABELS, chosenAiTool, type AiTool } from '../mcp/connect';
+import { setupSettled, stepInputs, type SidebarStep } from './setup-steps';
+import type { ProjectAnswers, SetupSnapshot, SignInPhase } from './setup-snapshot';
+import { AI_TOOL_LABELS, chosenAiTool, copilotMcpSupported, editorKind, pickedAiTool, type AiTool } from '../mcp/connect';
+
+export type { ProjectAnswers, SetupSnapshot } from './setup-snapshot';
 
 /**
- * What the Home panel shows: where this folder is in getting set up. Loaded
- * independently of the specs tree (which only fetches while visible), so the
- * panel can tell when the first spec lands and hand over to the tree.
+ * How long a just-started scan shows as running before the job has marked it
+ * (a few seconds, normally). Short, so a scan that fails at once (robots.txt,
+ * a site that doesn't answer) shows its failure soon after.
  */
-export interface SetupSnapshot {
-  hasFolder: boolean;
-  signedIn: boolean;
-  /** Signed in through OAuth for this folder's project (vs a pasted API key). */
-  viaSignIn: boolean;
-  clientId: string | null;
-  /** projects.id (the /sites/:id API id). */
-  siteId: string | null;
-  projectName: string | null;
-  /** The open folder's name: the default project name. */
-  folderName: string | null;
-  /** The project's setup answers, as saved. */
-  project: ProjectAnswers | null;
-  /** The project questions still need answering (sidebar step "Your project"). */
-  needsProjectSetup: boolean;
-  /** Site scan: none yet, running, finished (pages found), or failed. */
-  scan: 'none' | 'running' | 'done' | 'failed';
-  gsc: { connected: boolean; hasProperty: boolean };
-  /** Rampify's MCP server is in this folder's (or Cursor's) MCP config. */
-  mcpConfigured: boolean;
-  /**
-   * An AI tool has actually connected to Rampify over MCP (server-reported).
-   * Null when the server doesn't say; the checklist falls back to mcpConfigured.
-   */
-  aiToolConnected: boolean | null;
-  specCount: number;
-  /** The getting-started spec (spec a3f4b733), once created. */
-  gettingStarted: { id: string; title: string; status: string; tasks: { id: string; title: string; status: string }[] } | null;
-  /** The spec the user's AI wrote from it ("what you're working on"). */
-  followUp: { id: string; title: string; status: string } | null;
-  /** The user's own specs (not the getting-started spec, not scan specs). */
-  userSpecCount: number;
-  /** Specs Rampify's site scans filed. */
-  scanSpecCount: number;
-  /** The folder has commits (null = couldn't tell). No commits → ask what they're building. */
-  hasCommits: boolean | null;
-  /** Where prompts go: the AI tool the user connected (or the editor's own). */
-  aiTool: AiTool;
-  aiToolLabel: string;
-  /** Steps the user chose "Skip for now" on, for this folder's project. */
-  skipped: SidebarStep[];
-  /** Couldn't reach Rampify or the project. */
-  error: string | null;
-}
+const SCAN_START_GRACE_MS = 20_000;
 
-export interface ProjectAnswers {
-  name: string | null;
-  type: ProjectType | null;
-  startingPoint: StartingPoint | null;
-  domain: string | null;
+/**
+ * The site's scan, from the server: running while the job runs, else the
+ * site's state (site_state(), the one definition). Older servers without
+ * `onboarding`: from the crawl fields.
+ */
+function scanOf(setup: ProjectSetup): SetupSnapshot['scan'] {
+  if (setup.bootstrap_phase === 'crawling') { return 'running'; }
+  const site = setup.onboarding?.facts.siteState;
+  if (site) { return site === 'scanned' ? 'done' : site === 'crawl_failed' ? 'failed' : 'none'; }
+  return setup.has_crawled_urls ? 'done' : setup.bootstrap_phase === 'crawl_failed' ? 'failed' : 'none';
 }
 
 const MCP_DONE_KEY = 'rampify.mcpSetupDone';
@@ -79,6 +44,8 @@ export class SetupState implements vscode.Disposable {
   private readonly emitter = new vscode.EventEmitter<SetupSnapshot>();
   readonly onDidChange = this.emitter.event;
   private loading: Promise<void> | undefined;
+  private scanStartedAt = 0;
+  private signInPhase: SignInPhase = 'idle';
 
   constructor(
     private readonly getApiClient: () => RampifyApiClient,
@@ -95,13 +62,34 @@ export class SetupState implements vscode.Disposable {
     return this.workspaceState;
   }
 
-  /** Skip a step for this folder's project, or bring it back. */
-  async setSkipped(step: SidebarStep, skipped: boolean): Promise<void> {
-    const key = `${SKIPPED_KEY}.${this.snapshot.clientId ?? 'none'}`;
-    const current = new Set(this.workspaceState.get<SidebarStep[]>(key) ?? []);
-    if (skipped) { current.add(step); } else { current.delete(step); }
-    await this.workspaceState.update(key, [...current]);
+  /**
+   * Skip a step, or bring it back. Onboarding skips are stored on the server
+   * (Search Console per project, "how did you find us" per person), so the web
+   * and the AI tool see them too; "Your first spec" is this machine's.
+   */
+  /** Skip or un-skip a step. False when the server didn't take it. */
+  async setSkipped(step: SidebarStep, skipped: boolean): Promise<boolean> {
+    const api = this.getApiClient();
+    let ok = true;
+    if (step === 'search_console' && this.snapshot.siteId) {
+      ok = await api.setOnboardingStepSkipped(this.snapshot.siteId, 'search_console', skipped);
+    } else if (step === 'how_found') {
+      // Skipping is final (it records that they were asked), as on the web.
+      if (skipped) { ok = await api.saveHowFound(null); }
+    } else if (step === 'first_spec') {
+      await this.workspaceState.update(`${SKIPPED_KEY}.${this.snapshot.clientId ?? 'none'}`, skipped ? ['first_spec'] : []);
+    }
     await this.refresh();
+    return ok;
+  }
+
+  /**
+   * A scan was just started. The job marks the project as scanning a few
+   * seconds later, so until it does (at most SCAN_START_GRACE_MS) the sidebar
+   * shows it running rather than the old result.
+   */
+  scanStarted(): void {
+    this.scanStartedAt = Date.now();
   }
 
   /**
@@ -125,9 +113,7 @@ export class SetupState implements vscode.Disposable {
     if (override) { return override; }
     const s = this.snapshot;
     if (!s.signedIn || !s.clientId) { return 'home'; }
-    const ids = sidebarSteps(s.needsProjectSetup ? null : s.project?.type ?? null, s.needsProjectSetup ? null : s.project?.startingPoint ?? null);
-    const settled = ids.every((id) => stepDone(id, s) || s.skipped.includes(id));
-    return settled || (s.userSpecCount > 0 && !s.gettingStarted) ? 'specs' : 'home';
+    return setupSettled(stepInputs(s)) || (s.userSpecCount > 0 && !s.gettingStarted) ? 'specs' : 'home';
   }
 
   private applyView(): void {
@@ -145,11 +131,26 @@ export class SetupState implements vscode.Disposable {
    * Re-read everything; concurrent calls share one load. `background` marks
    * loads the extension starts on its own (polling, focus), not a click.
    */
-  refresh(opts: { background?: boolean } = {}): Promise<void> {
+  refresh(opts: { background?: boolean; fresh?: boolean } = {}): Promise<void> {
+    // `fresh`: a load already running may have started before what the
+    // caller just changed (a sign-in linking the folder): run another after it.
+    if (opts.fresh && this.loading) {
+      const after = this.loading.then(() => this.refresh({ background: opts.background }));
+      return after;
+    }
     if (!this.loading) {
       this.loading = this.load(opts.background ?? false).finally(() => { this.loading = undefined; });
     }
     return this.loading;
+  }
+
+  /** Show a sign-in's progress (it outlives reloads until it's over). */
+  setSignInPhase(phase: SignInPhase): void {
+    if (this.signInPhase === phase) { return; }
+    this.signInPhase = phase;
+    this.snapshot = { ...this.snapshot, signInPhase: phase };
+    this.applyView();
+    this.emitter.fire(this.snapshot);
   }
 
   private async load(background: boolean): Promise<void> {
@@ -161,34 +162,64 @@ export class SetupState implements vscode.Disposable {
     next.viaSignIn = this.session.hasProjectToken;
     next.clientId = getProjectConfig()?.clientId ?? null;
     next.mcpConfigured = !!this.workspaceState.get<boolean>(MCP_DONE_KEY) || detectMcpConfig();
-    next.skipped = this.workspaceState.get<SidebarStep[]>(`${SKIPPED_KEY}.${next.clientId ?? 'none'}`) ?? [];
+    next.firstSpecSkipped = (this.workspaceState.get<SidebarStep[]>(`${SKIPPED_KEY}.${next.clientId ?? 'none'}`) ?? []).includes('first_spec');
     next.aiTool = chosenAiTool(this.workspaceState);
     next.aiToolLabel = AI_TOOL_LABELS[next.aiTool];
+
+    next.editor = editorKind();
+    next.copilotReady = copilotMcpSupported();
+    next.pickedAiTool = pickedAiTool(this.workspaceState, next.clientId);
 
     if (next.signedIn && next.clientId) {
       const api = this.getApiClient().withTrigger(background ? 'background' : 'user');
       try {
-        const clients = await api.getClients({ silent: true });
+        // Two waves of requests in parallel, not one after another: what
+        // needs only the folder's project, then what needs its site.
+        const [clients, site, hasCommits, aiToolConnected] = await Promise.all([
+          api.getClients({ silent: true }),
+          api.getSite(next.clientId, { silent: true }),
+          folderHasCommits(),
+          api.getAiToolConnected(),
+        ]);
         const client = clients.find((c) => c.id === next.clientId);
         next.projectName = client ? projectDisplayName(client) : null;
-        const site = await api.getSite(next.clientId, { silent: true });
         next.siteId = site?.id ?? null;
-        const setup = site ? await api.getSetup(site.id) : null;
+        next.hasCommits = hasCommits;
+        next.aiToolConnected = aiToolConnected;
+        const [setup, specCount, gs] = site
+          ? await Promise.all([api.getSetup(site.id), api.countFeatureSpecs(site.id), api.getGettingStarted(site.id)])
+          : [null, 0, null];
+        const prev = this.snapshot;
         if (setup) {
           const p = setup.project;
-          next.project = { name: p.name, type: p.project_type, startingPoint: p.starting_point, domain: p.domain };
-          // Answered in the sidebar or on the web, or the web wizard was finished.
-          next.needsProjectSetup = !(projectAnswered(p.project_type, p.starting_point) || setup.wizard?.state === 'completed');
-          next.scan = setup.bootstrap_phase === 'crawling'
-            ? 'running'
-            : setup.has_crawled_urls ? 'done' : setup.bootstrap_phase === 'crawl_failed' ? 'failed' : 'none';
+          next.project = { name: p.name, domain: p.domain };
+          next.onboarding = setup.onboarding ?? null;
+          next.howFoundOptions = setup.how_found_options ?? [];
+          next.scanFailure = setup.scan_failure ?? null;
+          next.firstPrompt = setup.first_prompt ?? null;
+          next.scan = scanOf(setup);
           next.gsc = { connected: setup.gsc.connected, hasProperty: setup.gsc.has_property };
+          if (next.scan === 'running') { this.scanStartedAt = 0; }
+          if (next.scan !== 'running' && Date.now() - this.scanStartedAt < SCAN_START_GRACE_MS) {
+            next.scan = 'running';
+            next.scanFailure = null;
+          }
+        } else if (site && prev.siteId === site.id && prev.project) {
+          // A request that failed (timeout, 5xx): keep what we last knew
+          // rather than shrinking the checklist to the older-server fallback.
+          next.project = prev.project;
+          next.onboarding = prev.onboarding;
+          next.howFoundOptions = prev.howFoundOptions;
+          next.scanFailure = prev.scanFailure;
+          next.firstPrompt = prev.firstPrompt;
+          next.scan = prev.scan;
+          next.gsc = prev.gsc;
         } else {
-          // Older server: fall back to "has a site".
-          next.needsProjectSetup = !(site?.domain || (client && primaryProject(client)?.domain));
+          // Older server: the site from the project list.
+          const domain = site?.domain ?? (client ? primaryProject(client)?.domain : null) ?? null;
+          next.project = { name: null, domain };
         }
-        next.specCount = site ? await api.countFeatureSpecs(site.id) : 0;
-        const gs = site ? await api.getGettingStarted(site.id) : null;
+        next.specCount = specCount;
         if (gs) {
           next.gettingStarted = gs.getting_started;
           next.followUp = gs.follow_up;
@@ -198,8 +229,6 @@ export class SetupState implements vscode.Disposable {
           // Older server: treat every spec as the user's.
           next.userSpecCount = next.specCount;
         }
-        next.hasCommits = await folderHasCommits();
-        next.aiToolConnected = await api.getAiToolConnected();
         if (!client) {
           next.error = "This folder's project isn't available with your current sign-in.";
         }
@@ -208,6 +237,8 @@ export class SetupState implements vscode.Disposable {
       }
     }
 
+    // The phase as it is now, not when this load started.
+    next.signInPhase = this.signInPhase;
     this.snapshot = next;
     this.applyView();
     this.emitter.fire(next);
@@ -221,11 +252,12 @@ export class SetupState implements vscode.Disposable {
 function emptySnapshot(): SetupSnapshot {
   return {
     hasFolder: false, signedIn: false, viaSignIn: false, clientId: null, siteId: null,
-    projectName: null, folderName: null, project: null, needsProjectSetup: false,
+    projectName: null, folderName: null, project: null, onboarding: null, howFoundOptions: [], scanFailure: null,
     scan: 'none', gsc: { connected: false, hasProperty: false },
-    mcpConfigured: false, aiToolConnected: null, specCount: 0, skipped: [], error: null,
+    mcpConfigured: false, aiToolConnected: null, specCount: 0, firstSpecSkipped: false, error: null,
     gettingStarted: null, followUp: null, userSpecCount: 0, scanSpecCount: 0, hasCommits: null,
     aiTool: 'copilot', aiToolLabel: AI_TOOL_LABELS.copilot,
+    signInPhase: 'idle', editor: 'other', copilotReady: false, pickedAiTool: null, firstPrompt: null,
   };
 }
 
