@@ -2,6 +2,11 @@
 
 All notable changes to the Rampify VS Code extension will be documented in this file.
 
+## [0.12.2] - 2026-10-27
+
+### Changed
+- Requests to Rampify also name the editor the extension runs in (`vscode`, `cursor`, `windsurf`…, from `vscode.env.uriScheme`) next to the operating system in the `X-Rampify-Client` header, so Rampify can show which editor your AI tool runs in. Nothing about your code or files is sent
+
 ## [0.12.1] - 2026-10-26
 
 ### Changed

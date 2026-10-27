@@ -31,14 +31,16 @@ export type ApiKeyCheck = 'valid' | 'invalid' | 'unreachable';
 export type RequestTrigger = 'user' | 'background';
 
 /**
- * "vscode-extension/<version> (<os>)", sent as X-Rampify-Client on every
- * request. The OS is process.platform ("darwin", "win32", "linux"), so
- * Rampify knows which systems people use it on (spec d9f5f8ec); nothing
- * about the user's code or files. The server still accepts the old form.
+ * "vscode-extension/<version> (<os>; <editor>)", sent as X-Rampify-Client on
+ * every request. The OS is process.platform ("darwin", "win32", "linux") and
+ * the editor vscode.env.uriScheme ("vscode", "cursor"), so Rampify knows which
+ * systems and editors people use it in (spec d9f5f8ec); nothing about the
+ * user's code or files. The server still accepts the older forms.
  */
 function clientHeader(): string {
   const version = vscode.extensions.getExtension('rampify.rampify')?.packageJSON?.version ?? 'unknown';
-  return `vscode-extension/${version} (${process.platform})`;
+  // The editor's URI scheme ("vscode", "cursor", "windsurf"): which editor the extension runs in.
+  return `vscode-extension/${version} (${process.platform}; ${vscode.env.uriScheme})`;
 }
 
 export interface RampifyConfig {

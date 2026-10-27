@@ -2,7 +2,7 @@
   "name": "rampify",
   "displayName": "Rampify: Spec-Driven Development",
   "description": "Spec-driven development for AI coding tools. Define specs, track SEO issues, and verify fixes, so AI builds what you actually intended.",
-  "version": "0.12.1",
+  "version": "0.12.2",
   "publisher": "rampify",
   "engines": {
     "vscode": "^1.85.0"
