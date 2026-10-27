@@ -2,11 +2,19 @@
 
 All notable changes to the Rampify VS Code extension will be documented in this file.
 
+## [0.12.1] - 2026-10-26
+
+### Changed
+- Requests to Rampify now include your operating system (`darwin`, `win32` or `linux`, from Node's `process.platform`) next to the extension's version in the `X-Rampify-Client` header, so Rampify can see which systems people use it on. Nothing about your code or files is sent
+
+### Fixed
+- Rampify appears in GitHub Copilot only once the folder is signed in to the extension, so Copilot no longer picks up older Rampify servers. Copilot still asks you to authenticate once in the browser (its chat doesn't use the extension's sign-in); the panel now says so
+
 ## [0.12.0] - 2026-10-26
 
 ### Changed
 - The Home panel is Rampify's setup checklist, the same steps as the web and your AI tool: add your website, connect your AI tool, Search Console (optional), and how you found Rampify. One step is open at a time, and a scan that didn't finish says why
-- Connecting GitHub Copilot uses the extension's own sign-in: no second sign-in in the browser. Claude Code and Cursor get step-by-step instructions in the panel, and the first prompt unlocks once your AI tool reaches Rampify
+- Connecting your AI tool (GitHub Copilot, Claude Code or Cursor) has step-by-step instructions in the panel, and the first prompt unlocks once your AI tool reaches Rampify
 - Each project gets its own Rampify server address, so AI tools keep a separate sign-in per project
 - Signing in shows its progress in the panel, finishes even if the browser step takes a while (or the window reloads), and the checklist loads faster
 

@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
+import * as crypto from 'crypto';
 
 /**
  * Connecting the user's AI tool to Rampify's MCP server, pinned to this
@@ -194,14 +195,21 @@ export class CopilotMcpProvider implements vscode.Disposable {
       lm: { registerMcpServerDefinitionProvider(id: string, p: unknown): vscode.Disposable };
     }).lm;
     const Def = (vscode as unknown as {
-      McpHttpServerDefinition: new (label: string, uri: vscode.Uri, headers?: Record<string, string>) => unknown;
+      McpHttpServerDefinition: new (label: string, uri: vscode.Uri, headers?: Record<string, string>, version?: string) => unknown;
     }).McpHttpServerDefinition;
     this.registration = lm.registerMcpServerDefinitionProvider('rampify', {
       onDidChangeMcpServerDefinitions: this.changed.event,
       provideMcpServerDefinitions: () => {
         const pin = this.getPin();
-        if (!this.enabled || !pin) { return []; }
-        return [new Def(COPILOT_SERVER_LABEL, vscode.Uri.parse(projectMcpUrl(this.getMcpUrl(), pin)), { [PIN_HEADER]: pin })];
+        const token = this.getToken();
+        // Only once the extension is signed in for this folder: without its key
+        // VS Code would start the server and fall back to its own browser
+        // sign-in (founder test, 2026-10-26). Signing in in the sidebar comes first.
+        if (!this.enabled || !pin || !token) { return []; }
+        // The version changes with the key, so a new sign-in is a new server
+        // to VS Code: it restarts it with the new key (resolve below).
+        const version = crypto.createHash('sha256').update(token).digest('hex').slice(0, 12);
+        return [new Def(COPILOT_SERVER_LABEL, vscode.Uri.parse(projectMcpUrl(this.getMcpUrl(), pin)), { [PIN_HEADER]: pin }, version)];
       },
       // When VS Code starts the server: the extension's key, so it isn't in
       // the definition VS Code lists or caches. Without one (signed out),

@@ -265,8 +265,8 @@ const NEXT_STEPS: Record<AiTool, {
 }> = {
   copilot: {
     connect: [
-      'Click <b>Start Rampify</b>. VS Code starts it and asks you to sign in.',
-      'Allow it and sign in to Rampify, choosing this project.',
+      'Click <b>Start Rampify</b>. Copilot asks you to authenticate once: click <b>Authenticate</b>.',
+      'Sign in to Rampify in the browser, choosing this project. Close any older Rampify sign-in tabs first.',
     ],
     connectAction: { action: 'startCopilot', label: 'Start Rampify' },
     send: { action: 'sendPrompt', label: 'Send First Prompt', where: 'It opens in Copilot Chat (Agent mode). Make sure Rampify is on in the chat\u2019s tools, then send it.' },
