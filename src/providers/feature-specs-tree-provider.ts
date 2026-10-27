@@ -220,9 +220,10 @@ export class FeatureSpecsTreeProvider implements vscode.TreeDataProvider<TreeIte
   }
 
   async getChildren(element?: TreeItem): Promise<TreeItem[]> {
+    // Signed out, or no project linked to this folder: the sidebar shows Home
+    // (sign-in and setup) instead of this list.
     const projectConfig = getProjectConfig();
-    if (!projectConfig) {
-      // Welcome View handles this state via viewsWelcome in package.json
+    if (!projectConfig || !this.getApiClient().signedIn) {
       return [];
     }
 
@@ -232,7 +233,6 @@ export class FeatureSpecsTreeProvider implements vscode.TreeDataProvider<TreeIte
       }
 
       if (this.specs.length === 0) {
-        // Welcome View handles this state via viewsWelcome in package.json
         return [];
       }
 

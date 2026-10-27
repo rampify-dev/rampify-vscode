@@ -2,6 +2,11 @@
 
 All notable changes to the Rampify VS Code extension will be documented in this file.
 
+## [0.12.3] - 2026-10-27
+
+### Fixed
+- Signing out shows the sign-in panel, even if you'd chosen the Specs list, instead of a blank list and an "Unauthorized. Please check your settings." message. Signed out, the extension no longer asks Rampify for anything, and a sign-in that expired or was revoked now says so and offers "Sign in"
+
 ## [0.12.2] - 2026-10-27
 
 ### Changed

@@ -213,7 +213,8 @@ export async function activate(context: vscode.ExtensionContext) {
       apiClient = createApiClient();
       updateOnboardingContext();
       featureSpecsProvider.refresh({ background: true });
-      setupState.refresh({ background: true });
+      // Fresh: a load already running read the old session.
+      setupState.refresh({ background: true, fresh: true });
     })
   );
 

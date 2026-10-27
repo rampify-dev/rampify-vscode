@@ -22,6 +22,14 @@ declare module 'axios' {
 
 export type ApiKeyCheck = 'valid' | 'invalid' | 'unreachable';
 
+/** A request made while signed out: never sent, never toasted. */
+export class SignedOutError extends Error {
+  constructor() {
+    super('Not signed in to Rampify');
+    this.name = 'SignedOutError';
+  }
+}
+
 /**
  * Why a request is being made, sent as X-Rampify-Trigger so Rampify can tell
  * a person acting in the editor ("user": a click or command) from the
@@ -41,6 +49,26 @@ function clientHeader(): string {
   const version = vscode.extensions.getExtension('rampify.rampify')?.packageJSON?.version ?? 'unknown';
   // The editor's URI scheme ("vscode", "cursor", "windsurf"): which editor the extension runs in.
   return `vscode-extension/${version} (${process.platform}; ${vscode.env.uriScheme})`;
+}
+
+const SIGN_IN_PROMPT_GAP_MS = 60_000;
+let lastSignInPromptAt = 0;
+
+/**
+ * A 401 with a key: the stored key was revoked or expired, and signing in
+ * again replaces it. One prompt per burst of failed requests. (By time, not
+ * by the prompt closing: an unread toast never settles.)
+ */
+function promptSignIn(): void {
+  const now = Date.now();
+  if (now - lastSignInPromptAt < SIGN_IN_PROMPT_GAP_MS) { return; }
+  lastSignInPromptAt = now;
+  vscode.window.showErrorMessage(
+    'Rampify: your sign-in expired or was revoked. Sign in again to continue.',
+    'Sign in'
+  ).then((action) => {
+    if (action === 'Sign in') { vscode.commands.executeCommand('rampify.signIn'); }
+  });
 }
 
 export interface RampifyConfig {
@@ -76,10 +104,21 @@ export class RampifyApiClient {
       timeout: 30000,
     });
 
+    // Signed out: nothing to send. A refresh racing a sign-out (the session
+    // changes before the folder's project is cleared) would otherwise ask
+    // Rampify with an empty key and toast its 401.
+    this.axios.interceptors.request.use((request) => {
+      if (!this.signedIn) { throw new SignedOutError(); }
+      return request;
+    });
+
     // Add response interceptor for error handling
     this.axios.interceptors.response.use(
       (response) => response,
       (error: AxiosError<ApiError>) => {
+        if (error instanceof SignedOutError) {
+          return Promise.reject(error);
+        }
         // Never log request headers: they carry the API key.
         console.error('API Error:', {
           status: error.response?.status,
@@ -94,8 +133,7 @@ export class RampifyApiClient {
         }
 
         if (error.response?.status === 401) {
-          const errorMsg = error.response?.data?.error || 'Invalid API key';
-          vscode.window.showErrorMessage(`Rampify: ${errorMsg}. Please check your settings.`);
+          promptSignIn();
         } else if (error.response?.status === 403) {
           vscode.window.showErrorMessage('Rampify: Access denied. Please check your permissions.');
         } else if (error.response?.data?.error) {
@@ -106,6 +144,11 @@ export class RampifyApiClient {
         return Promise.reject(error);
       }
     );
+  }
+
+  /** Whether the client has a key to send; without one it sends nothing. */
+  get signedIn(): boolean {
+    return !!this.config.apiKey;
   }
 
   private getBaseUrl(): string {
@@ -143,6 +186,7 @@ export class RampifyApiClient {
       const response = await this.axios.post<{ client: Client }>('/clients', data, { rampifySilent: true });
       return { ok: true, client: response.data.client };
     } catch (error) {
+      if (error instanceof SignedOutError) { return { ok: false, reason: 'error', message: 'Sign in to Rampify first.' }; }
       if (!axios.isAxiosError(error)) { throw error; }
       const body = (error.response?.data ?? {}) as ApiError & {
         code?: string;

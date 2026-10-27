@@ -107,12 +107,16 @@ export class SetupState implements vscode.Disposable {
    * once setup is settled (every step done or skipped), or for people who
    * already had their own specs before onboarding existed. Scan specs never
    * switch it, so a scan mid-onboarding doesn't take over the sidebar.
+   * Signed out, it's always Home (the sign-in panel), whatever was chosen.
    */
   get currentView(): SidebarView {
+    // The session, not the snapshot: a load that started before sign-out
+    // still carries signedIn: true.
+    if (!this.session.isSignedIn) { return 'home'; }
+    const s = this.snapshot;
     const override = this.workspaceState.get<SidebarView>(VIEW_KEY);
     if (override) { return override; }
-    const s = this.snapshot;
-    if (!s.signedIn || !s.clientId) { return 'home'; }
+    if (!s.clientId) { return 'home'; }
     return setupSettled(stepInputs(s)) || (s.userSpecCount > 0 && !s.gettingStarted) ? 'specs' : 'home';
   }
 
