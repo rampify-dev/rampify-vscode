@@ -64,15 +64,16 @@ export class SetupState implements vscode.Disposable {
 
   /**
    * Skip a step, or bring it back. Onboarding skips are stored on the server
-   * (Search Console per project, "how did you find us" per person), so the web
+   * (Search Console and the first playbook per project, "how did you find us"
+   * per person), so the web
    * and the AI tool see them too; "Your first spec" is this machine's.
    */
   /** Skip or un-skip a step. False when the server didn't take it. */
   async setSkipped(step: SidebarStep, skipped: boolean): Promise<boolean> {
     const api = this.getApiClient();
     let ok = true;
-    if (step === 'search_console' && this.snapshot.siteId) {
-      ok = await api.setOnboardingStepSkipped(this.snapshot.siteId, 'search_console', skipped);
+    if ((step === 'search_console' || step === 'first_playbook') && this.snapshot.siteId) {
+      ok = await api.setOnboardingStepSkipped(this.snapshot.siteId, step, skipped);
     } else if (step === 'how_found') {
       // Skipping is final (it records that they were asked), as on the web.
       if (skipped) { ok = await api.saveHowFound(null); }
@@ -201,6 +202,7 @@ export class SetupState implements vscode.Disposable {
           next.howFoundOptions = setup.how_found_options ?? [];
           next.scanFailure = setup.scan_failure ?? null;
           next.firstPrompt = setup.first_prompt ?? null;
+          next.firstPlaybook = setup.first_playbook ?? null;
           next.scan = scanOf(setup);
           next.gsc = { connected: setup.gsc.connected, hasProperty: setup.gsc.has_property };
           if (next.scan === 'running') { this.scanStartedAt = 0; }
@@ -216,6 +218,7 @@ export class SetupState implements vscode.Disposable {
           next.howFoundOptions = prev.howFoundOptions;
           next.scanFailure = prev.scanFailure;
           next.firstPrompt = prev.firstPrompt;
+          next.firstPlaybook = prev.firstPlaybook;
           next.scan = prev.scan;
           next.gsc = prev.gsc;
         } else {
@@ -261,7 +264,7 @@ function emptySnapshot(): SetupSnapshot {
     mcpConfigured: false, aiToolConnected: null, specCount: 0, firstSpecSkipped: false, error: null,
     gettingStarted: null, followUp: null, userSpecCount: 0, scanSpecCount: 0, hasCommits: null,
     aiTool: 'copilot', aiToolLabel: AI_TOOL_LABELS.copilot,
-    signInPhase: 'idle', editor: 'other', copilotReady: false, pickedAiTool: null, firstPrompt: null,
+    signInPhase: 'idle', editor: 'other', copilotReady: false, pickedAiTool: null, firstPrompt: null, firstPlaybook: null,
   };
 }
 

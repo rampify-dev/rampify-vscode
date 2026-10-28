@@ -10,6 +10,9 @@ import {
   ProjectQuota,
   ApiError
 } from './types';
+import { RENDERED_STEPS, type FirstPlaybook } from '../views/setup-steps';
+
+export type { FirstPlaybook };
 
 export type Environment = 'production' | 'staging' | 'local';
 
@@ -244,7 +247,7 @@ export class RampifyApiClient {
    */
   async getSetup(siteId: string): Promise<ProjectSetup | null> {
     try {
-      const response = await this.axios.get<ProjectSetup>(`/sites/${siteId}/setup-advance`, { rampifySilent: true });
+      const response = await this.axios.get<ProjectSetup>(`/sites/${siteId}/setup-advance?steps=${RENDERED_STEPS.join(',')}`, { rampifySilent: true });
       return response.data;
     } catch {
       return null;
@@ -400,6 +403,8 @@ export interface ProjectSetup {
   scan_failure?: { kind: string; summary: string; nextStep: string; helpUrl: string | null } | null;
   /** What to ask the AI tool first (lib/onboarding/first-prompt.ts). */
   first_prompt?: string;
+  /** Onboarding's first playbook (spec 73656715): absent on older servers. */
+  first_playbook?: FirstPlaybook;
   project: {
     domain: string | null;
     name: string | null;

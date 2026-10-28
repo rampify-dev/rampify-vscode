@@ -1,5 +1,5 @@
 import type { AiTool, EditorKind, SetupSnapshot } from './setup-snapshot';
-import { claudePromptCommand, GET_STARTED_PROMPT } from '../mcp/prompt-names';
+import { claudePromptCommand, GET_STARTED_PROMPT, vscodePromptCommand } from '../mcp/prompt-names';
 import { setupSettled, sidebarSteps, stepDone, stepInputs, stepSkipped, tidyFolderName, type OnboardingStep, type SidebarStep, type StepInputs } from './setup-steps';
 
 /**
@@ -215,6 +215,22 @@ function buildStep(id: OnboardingStep, s: SetupSnapshot, o: HomeHtmlOptions, inp
         'Pick the AI tool you code with. It reads and updates your specs through Rampify, for this folder\u2019s project only.',
         `${toolTiles(s)}
       <p class="small"><button class="link" data-action="setupMcp">Other tools</button></p>${later}`);
+    }
+    case 'first_playbook': {
+      // The server's playbook and prompt (spec 73656715); an older server sends none, and then no such step either.
+      const pb = s.firstPlaybook;
+      const done = stepDone('first_playbook', inputs);
+      const title = 'Run your first playbook';
+      if (!pb) { return step(id, done, skipped, title, 'See whether AI assistants name you when buyers ask about your category.', `${skipLink(id)}`); }
+      const intro = `${escapeHtml(pb.question)} Your AI tool runs Rampify\u2019s ${escapeHtml(pb.name)}: about ${pb.minutes} to 10 minutes, ending with a spec for the biggest gap.`;
+      if (done) { return step(id, true, false, title, 'Done. See what AI said on Research in the Rampify dashboard.', ''); }
+      if (s.onboarding?.steps.find((x) => x.step === 'first_playbook')?.detail === 'running') {
+        return step(id, false, false, title, intro, '<p class="status"><span class="spinner"></span>Running in your AI tool. This step ticks when the run finishes.</p>', '', true);
+      }
+      return step(id, false, skipped, title, intro,
+        `<div class="prompt">${escapeHtml(pb.prompt)}</div>
+      ${button('runPlaybook', `Run in ${escapeHtml(s.aiToolLabel)}`)} <button class="btn small secondary" data-action="copyPlaybook">Copy</button>
+      <p class="small">In Claude Code, type <code>${claudePromptCommand(pb.prompt_name)}</code>; in Copilot, <code>${vscodePromptCommand(pb.prompt_name)}</code>.</p>${err}${skipLink(id)}`);
     }
     case 'how_found': {
       const choice = (h: { value: string; label: string }) =>

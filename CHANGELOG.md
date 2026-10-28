@@ -2,6 +2,11 @@
 
 All notable changes to the Rampify VS Code extension will be documented in this file.
 
+## [0.13.0] - 2026-10-28
+
+### Added
+- Setup has a new optional step after connecting your AI tool: **Run your first playbook**. Rampify's Category Visibility Check asks AI assistants the questions your buyers ask, shows whether they name you, and files a spec for the biggest gap. "Run in" sends the playbook's prompt to your AI tool (Copilot, Cursor or Claude Code), or type `/mcp__rampify__category_visibility` in Claude Code or `/mcp.Rampify.category_visibility` in Copilot. The step shows while the run is going and ticks when it finishes; Skip holds on the web and in your AI tool too
+
 ## [0.12.3] - 2026-10-27
 
 ### Fixed

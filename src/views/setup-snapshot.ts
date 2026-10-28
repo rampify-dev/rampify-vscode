@@ -4,7 +4,7 @@
  * tested outside the editor (tests/unit/vscode-sidebar-steps.test.ts runs in
  * the root project, where the vscode types aren't installed).
  */
-import type { OnboardingState } from './setup-steps';
+import type { FirstPlaybook, OnboardingState } from './setup-steps';
 
 /** The AI tools the extension can connect (labels in mcp/connect.ts). */
 export type AiTool = 'copilot' | 'cursor' | 'claude';
@@ -80,6 +80,8 @@ export interface SetupSnapshot {
   pickedAiTool: AiTool | null;
   /** What to ask the AI tool first (the server's, the same on every surface). */
   firstPrompt: string | null;
+  /** Onboarding's first playbook and its prompt (the server's; null on older servers). */
+  firstPlaybook: FirstPlaybook | null;
 }
 
 export interface ProjectAnswers {

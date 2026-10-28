@@ -9,8 +9,26 @@
  * Pure (no vscode import) so the Home panel's HTML can be rendered in tests.
  */
 
-export type OnboardingStep = 'site' | 'ai_tool' | 'search_console' | 'how_found';
+export type OnboardingStep = 'site' | 'ai_tool' | 'first_playbook' | 'search_console' | 'how_found';
+
+/**
+ * The steps this extension has a view for, sent as setup-advance's `steps` so
+ * the server leaves out any step added after this release (an older extension
+ * names none and gets the steps every release draws). Keep in step with
+ * buildStep in home-html.ts.
+ */
+export const RENDERED_STEPS: readonly OnboardingStep[] = ['site', 'ai_tool', 'first_playbook', 'search_console', 'how_found'];
 export type SidebarStep = OnboardingStep | 'first_spec';
+
+/** The research playbook onboarding offers first, and the prompt that runs it. */
+export interface FirstPlaybook {
+  name: string;
+  question: string;
+  minutes: number;
+  /** The MCP prompt's name: /mcp__rampify__<prompt_name> in Claude Code. */
+  prompt_name: string;
+  prompt: string;
+}
 
 /** One step of the server's onboarding state (lib/onboarding/state.ts OnboardingStepState). */
 export interface OnboardingStepState {
@@ -32,6 +50,8 @@ export interface OnboardingState {
     aiTool: 'used' | 'connected' | 'none';
     aiToolLive: boolean;
     howFound: 'answered' | 'skipped' | 'unanswered';
+    /** A research run on the project finished, is running, or none (servers before spec 73656715 don't send it). */
+    research?: 'completed' | 'running' | 'none';
     skipped: string[];
   };
 }

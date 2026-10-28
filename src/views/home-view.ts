@@ -5,7 +5,7 @@ import { firstPromptOf, renderHomeHtml, type HomeNotice } from './home-html';
 import type { SidebarStep } from './setup-steps';
 import type { ProjectUpdate, RampifyApiClient } from '../api/client';
 import { saveProjectConfig } from '../utils/project-config';
-import { forgetAiTool, sendFirstPrompt } from '../mcp/connect';
+import { forgetAiTool, sendFirstPrompt, sendToAiTool } from '../mcp/connect';
 
 /** What the site form posts. */
 interface ProjectFormData {
@@ -163,6 +163,26 @@ export class HomeViewProvider implements vscode.WebviewViewProvider, vscode.Disp
       case 'sendPrompt': {
         const tool = this.state.current.pickedAiTool;
         if (tool) { await sendFirstPrompt(tool, firstPromptOf(this.state.current)); }
+        break;
+      }
+      case 'runPlaybook': {
+        // The first playbook's prompt (the server's), to the AI tool prompts go to, left in the box to send.
+        const playbook = this.state.current.firstPlaybook;
+        if (playbook) {
+          await sendToAiTool(this.state.current.aiTool, playbook.prompt, { submit: false });
+          // The run happens in the AI tool: look again while it's likely going, so the step shows it.
+          for (const ms of [45_000, 3 * 60_000, 8 * 60_000, 15 * 60_000]) {
+            setTimeout(() => { void this.state.refresh({ background: true }); }, ms);
+          }
+        }
+        break;
+      }
+      case 'copyPlaybook': {
+        const playbook = this.state.current.firstPlaybook;
+        if (playbook) {
+          await vscode.env.clipboard.writeText(playbook.prompt);
+          vscode.window.setStatusBarMessage('Prompt copied', 3000);
+        }
         break;
       }
       case 'copyPrompt':
