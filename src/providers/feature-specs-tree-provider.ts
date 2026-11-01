@@ -1,9 +1,9 @@
 import * as vscode from 'vscode';
 import { RampifyApiClient } from '../api/client';
-import { FeatureSpec } from '../api/types';
+import { FeatureSpec, Goal } from '../api/types';
 import { getProjectConfig } from '../utils/project-config';
 
-type TreeItem = OriginGroupTreeItem | StatusGroupTreeItem | FeatureSpecTreeItem | MessageTreeItem;
+type TreeItem = GoalsGroupTreeItem | GoalTreeItem | OriginGroupTreeItem | StatusGroupTreeItem | FeatureSpecTreeItem | MessageTreeItem;
 
 /**
  * Where a spec came from: the user and their AI ('yours', including the
@@ -13,6 +13,39 @@ type TreeItem = OriginGroupTreeItem | StatusGroupTreeItem | FeatureSpecTreeItem 
 type Origin = 'yours' | 'scan';
 const SCAN_SOURCES = new Set(['seo_scan', 'security_scan', 'accessibility_scan']);
 const originOf = (spec: FeatureSpec): Origin => (SCAN_SOURCES.has(spec.source) ? 'scan' : 'yours');
+
+/** Shortened for a one-line description. */
+const short = (text: string, max = 28) => (text.length > max ? `${text.slice(0, max - 1).trimEnd()}…` : text);
+
+/** The project's goals, first in the list (Release 1, spec 9add89e9). */
+class GoalsGroupTreeItem extends vscode.TreeItem {
+  constructor(count: number) {
+    super('Goals', vscode.TreeItemCollapsibleState.Expanded);
+    this.contextValue = 'goalsGroup';
+    this.iconPath = new vscode.ThemeIcon('target');
+    this.description = `${count} active`;
+  }
+}
+
+/** One goal: expands to the open specs that serve it. */
+class GoalTreeItem extends vscode.TreeItem {
+  constructor(public readonly goal: Goal, public readonly openCount: number) {
+    super(goal.title, openCount > 0 ? vscode.TreeItemCollapsibleState.Collapsed : vscode.TreeItemCollapsibleState.None);
+    this.contextValue = 'goal';
+    this.iconPath = new vscode.ThemeIcon('target', new vscode.ThemeColor('editorWarning.foreground'));
+    this.description = openCount === 0 ? 'no open specs' : `${openCount} open spec${openCount !== 1 ? 's' : ''}`;
+  }
+}
+
+/** What a spec row says about its goal and its family (spec 9add89e9). */
+interface SpecContext {
+  goal?: Goal | null;
+  parent?: FeatureSpec | null;
+  /** Its parts, when it's an umbrella: Not doing left out of the total. */
+  parts?: { done: number; total: number } | null;
+  /** Shown inside an umbrella or a goal, where the status group isn't. */
+  showStatus?: boolean;
+}
 
 class OriginGroupTreeItem extends vscode.TreeItem {
   constructor(public readonly origin: Origin, count: number) {
@@ -26,22 +59,26 @@ class OriginGroupTreeItem extends vscode.TreeItem {
   }
 }
 
+// The dashboard's group order (lib/specs/status.ts SPEC_STATUSES): what needs
+// you, then what's being built, then the backlog, then what's finished. A unit
+// test keeps them equal.
 const STATUS_ORDER: FeatureSpec['status'][] = [
-  'planned',
+  'idea',
   'in_progress',
+  'planned',
   'completed',
   'verified',
-  'idea',
   'deprecated',
 ];
 
+// The dashboard's labels (lib/specs/status.ts, spec 0ebf5052); a unit test keeps them equal.
 const STATUS_LABELS: Record<FeatureSpec['status'], string> = {
-  in_progress: 'In Progress',
+  in_progress: 'In progress',
   planned: 'Planned',
-  completed: 'Completed',
-  verified: 'Verified',
+  completed: 'Done',
+  verified: 'Live',
   idea: 'Idea',
-  deprecated: 'Deprecated',
+  deprecated: 'Not doing',
 };
 
 const STATUS_ICONS: Record<FeatureSpec['status'], string> = {
@@ -95,9 +132,11 @@ class FeatureSpecTreeItem extends vscode.TreeItem {
   constructor(
     public readonly spec: FeatureSpec,
     public readonly clientId: string,
-    public readonly webUrl: string
+    public readonly webUrl: string,
+    ctx: SpecContext = {}
   ) {
-    super(spec.title, vscode.TreeItemCollapsibleState.None);
+    // An umbrella expands to its parts.
+    super(spec.title, ctx.parts && ctx.parts.total > 0 ? vscode.TreeItemCollapsibleState.Collapsed : vscode.TreeItemCollapsibleState.None);
     this.contextValue = 'featureSpec';
 
     const isFinding = !!spec.module;
@@ -117,6 +156,17 @@ class FeatureSpecTreeItem extends vscode.TreeItem {
         : moduleLabel;
     } else {
       this.description = TYPE_LABELS[spec.feature_type] ?? spec.feature_type;
+    }
+    // Where it stands and what it belongs to: its status (inside an umbrella
+    // or a goal), its parts' progress, the goal it serves, its umbrella.
+    const extra = [
+      ctx.showStatus ? STATUS_LABELS[spec.status] : null,
+      ctx.parts && ctx.parts.total > 0 ? `${ctx.parts.done} of ${ctx.parts.total} done` : null,
+      ctx.goal ? `◎ ${short(ctx.goal.title)}` : null,
+      ctx.parent ? `part of “${short(ctx.parent.title)}”` : null,
+    ].filter(Boolean);
+    if (extra.length > 0) {
+      this.description = [ctx.showStatus ? null : this.description, ...extra].filter(Boolean).join(' · ');
     }
 
     // Tooltip with full context
@@ -141,6 +191,15 @@ class FeatureSpecTreeItem extends vscode.TreeItem {
     }
     if (spec.affected_files?.length > 0) {
       tooltip.appendMarkdown(`**Files:** ${spec.affected_files.slice(0, 3).join(', ')}${spec.affected_files.length > 3 ? '...' : ''}\n\n`);
+    }
+    if (ctx.goal) {
+      tooltip.appendMarkdown(`**Serves:** ${ctx.goal.title}\n\n`);
+    }
+    if (ctx.parent) {
+      tooltip.appendMarkdown(`**Part of:** ${ctx.parent.title}\n\n`);
+    }
+    if (ctx.parts && ctx.parts.total > 0) {
+      tooltip.appendMarkdown(`**Parts:** ${ctx.parts.done} of ${ctx.parts.total} done\n\n`);
     }
     if (spec.tags?.length > 0) {
       tooltip.appendMarkdown(`**Tags:** ${spec.tags.join(', ')}`);
@@ -179,6 +238,7 @@ export class FeatureSpecsTreeProvider implements vscode.TreeDataProvider<TreeIte
   readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
 
   private specs: FeatureSpec[] = [];
+  private goals: Goal[] = [];
   private loaded = false;
   private lastLoadedAt = 0;
   private nextLoadBackground = false;
@@ -207,6 +267,7 @@ export class FeatureSpecsTreeProvider implements vscode.TreeDataProvider<TreeIte
     this.loaded = false;
     this.lastLoadedAt = 0;
     this.specs = [];
+    this.goals = [];
     this._onDidChangeTreeData.fire();
   }
 
@@ -245,13 +306,37 @@ export class FeatureSpecsTreeProvider implements vscode.TreeDataProvider<TreeIte
       };
       const hasScanSpecs = this.specs.some(s => originOf(s) === 'scan');
 
-      // Root: split by origin once a scan has filed specs; otherwise status groups.
+      // Root: the goals first (when there are any), then split by origin once
+      // a scan has filed specs; otherwise status groups.
       if (!element) {
-        if (!hasScanSpecs) { return statusGroups(); }
-        return (['yours', 'scan'] as Origin[])
-          .map(origin => ({ origin, count: this.specs.filter(s => originOf(s) === origin && visible(s.status)).length }))
-          .filter(g => g.count > 0)
-          .map(g => new OriginGroupTreeItem(g.origin, g.count));
+        const goals: TreeItem[] = this.goals.length > 0 ? [new GoalsGroupTreeItem(this.goals.length)] : [];
+        if (!hasScanSpecs) { return [...goals, ...statusGroups()]; }
+        return [
+          ...goals,
+          ...(['yours', 'scan'] as Origin[])
+            .map(origin => ({ origin, count: this.specs.filter(s => originOf(s) === origin && visible(s.status)).length }))
+            .filter(g => g.count > 0)
+            .map(g => new OriginGroupTreeItem(g.origin, g.count)),
+        ];
+      }
+
+      // A goal's open specs (the statuses the list shows), with their status.
+      if (element instanceof GoalsGroupTreeItem) {
+        return this.goals.map(goal => new GoalTreeItem(goal, this.specs.filter(s => s.focus_id === goal.id && visible(s.status)).length));
+      }
+      if (element instanceof GoalTreeItem) {
+        return this.specs
+          .filter(s => s.focus_id === element.goal.id && visible(s.status))
+          .sort((a, b) => STATUS_ORDER.indexOf(a.status) - STATUS_ORDER.indexOf(b.status))
+          .map(spec => this.specItem(spec, projectConfig.clientId, { showStatus: true, inGoal: true }));
+      }
+
+      // An umbrella's parts, every status, in the dashboard's order.
+      if (element instanceof FeatureSpecTreeItem) {
+        return this.specs
+          .filter(s => s.parent_spec_id === element.spec.id)
+          .sort((a, b) => STATUS_ORDER.indexOf(a.status) - STATUS_ORDER.indexOf(b.status) || a.title.localeCompare(b.title))
+          .map(spec => this.specItem(spec, projectConfig.clientId, { showStatus: true, inParent: true }));
       }
 
       if (element instanceof OriginGroupTreeItem) {
@@ -268,9 +353,7 @@ export class FeatureSpecsTreeProvider implements vscode.TreeDataProvider<TreeIte
         };
         specs.sort((a, b) => priorityOrder[a.priority] - priorityOrder[b.priority]);
 
-        return specs.map(spec =>
-          new FeatureSpecTreeItem(spec, projectConfig.clientId, this.getWebUrl())
-        );
+        return specs.map(spec => this.specItem(spec, projectConfig.clientId));
       }
 
       return [];
@@ -291,9 +374,24 @@ export class FeatureSpecsTreeProvider implements vscode.TreeDataProvider<TreeIte
       return;
     }
 
-    this.specs = await api.getFeatureSpecs(site.id);
+    const { specs, goals } = await api.getFeatureSpecsAndGoals(site.id);
+    this.specs = specs;
+    this.goals = goals;
     this.loaded = true;
     this.lastLoadedAt = Date.now();
+  }
+
+  /** A spec's row, with its goal, umbrella and parts (spec 9add89e9). */
+  private specItem(spec: FeatureSpec, clientId: string, opts: { showStatus?: boolean; inParent?: boolean; inGoal?: boolean } = {}): FeatureSpecTreeItem {
+    const parts = this.specs.filter(s => s.parent_spec_id === spec.id && s.status !== 'deprecated');
+    return new FeatureSpecTreeItem(spec, clientId, this.getWebUrl(), {
+      // Inside its goal, naming the goal would only repeat the row above.
+      goal: !opts.inGoal && spec.focus_id ? this.goals.find(g => g.id === spec.focus_id) ?? null : null,
+      // Inside its umbrella, "part of" would only repeat the row above.
+      parent: !opts.inParent && spec.parent_spec_id ? this.specs.find(s => s.id === spec.parent_spec_id) ?? null : null,
+      parts: parts.length > 0 ? { done: parts.filter(p => p.status === 'completed' || p.status === 'verified').length, total: parts.length } : null,
+      showStatus: opts.showStatus,
+    });
   }
 
   private groupByStatus(origin?: Origin): Map<FeatureSpec['status'], FeatureSpec[]> {

@@ -5,6 +5,7 @@ import {
   Client,
   Site,
   FeatureSpec,
+  Goal,
   CreateClientRequest,
   CreateClientResult,
   ProjectQuota,
@@ -351,12 +352,13 @@ export class RampifyApiClient {
     return response.data.page?.total_count ?? response.data.count ?? 0;
   }
 
-  async getFeatureSpecs(siteId: string, status?: string): Promise<FeatureSpec[]> {
-    const params = status ? `?status=${status}` : '';
-    const response = await this.axios.get<{ specs: FeatureSpec[] }>(
-      `/sites/${siteId}/feature-specs${params}`
+  /** Every spec, with the project's active goals (so a spec's focus_id has a name). */
+  async getFeatureSpecsAndGoals(siteId: string): Promise<{ specs: FeatureSpec[]; goals: Goal[] }> {
+    const response = await this.axios.get<{ specs: FeatureSpec[]; goals?: Goal[] }>(
+      `/sites/${siteId}/feature-specs?include=goals`
     );
-    return response.data.specs;
+    // An older server leaves goals out: the list still works, without them.
+    return { specs: response.data.specs, goals: response.data.goals ?? [] };
   }
 
   // ============================================================================

@@ -12,6 +12,7 @@ import { primaryProject, projectDisplayName } from './utils/project-display';
 // Kept inside this package so the standalone mirror repo builds; a unit test
 // (tests/unit/vscode-rules-template-sync.test.ts) fails if the copies drift.
 import rulesTemplate from './templates/rampify-rules.md';
+import { rulesHash, rulesState } from './rules-versions';
 import { Session } from './auth/session';
 import { RampifyOAuth, SignInCancelled, type SignInResult } from './auth/oauth';
 import { SetupState } from './views/setup-state';
@@ -45,6 +46,8 @@ const PENDING_SIGN_IN_TTL_MS = 10 * 60 * 1000;
 export async function activate(context: vscode.ExtensionContext) {
   console.log('Rampify extension is now active');
   extContext = context;
+  // An existing rules file picks up Rampify's newer guidance (spec 949a2dd2).
+  void syncClaudeRulesFile({ create: false });
 
   // Credentials live in SecretStorage, per linked project (see auth/session.ts).
   session = await Session.create(context.secrets, getProjectConfig()?.clientId);
@@ -910,7 +913,7 @@ async function connectAiTool(tool: AiTool, opts: { quiet?: boolean } = {}): Prom
     } else {
       const file = writePinnedConfig(tool, getMcpUrl(), pin);
       if (tool === 'claude') {
-        await scaffoldClaudeRulesFile();
+        await syncClaudeRulesFile({ create: true });
         if (!opts.quiet) {
           vscode.window.showInformationMessage(
             `Rampify added to ${file}. Open Claude Code in this folder and type /mcp to sign in.`,
@@ -1061,11 +1064,14 @@ async function copyApiKeyConfig(mcpUrl: string): Promise<boolean> {
 }
 
 /**
- * Scaffold .claude/rules/rampify.md for Claude Code. The text is the same
- * template `rampify init` installs (bundled at build time), so the two never
- * drift. Never overwrites an existing file.
+ * Keep .claude/rules/rampify.md current for Claude Code (spec 949a2dd2). The
+ * text is the same template `rampify init` installs (bundled at build time).
+ * On connecting Claude Code it's created if missing; on every start an
+ * existing file is checked: an older Rampify text nobody edited is replaced
+ * with a notice, and an edited one is replaced only if you say so (asked once
+ * per new version). A folder without the file is left alone.
  */
-async function scaffoldClaudeRulesFile(): Promise<void> {
+async function syncClaudeRulesFile(opts: { create: boolean }): Promise<void> {
   const fs = require('fs') as typeof import('fs');
   const path = require('path') as typeof import('path');
 
@@ -1074,17 +1080,44 @@ async function scaffoldClaudeRulesFile(): Promise<void> {
 
   const rulesDir = path.join(workspaceFolder.uri.fsPath, '.claude', 'rules');
   const rulesFile = path.join(rulesDir, 'rampify.md');
-  if (fs.existsSync(rulesFile)) { return; }
-
-  fs.mkdirSync(rulesDir, { recursive: true });
-  fs.writeFileSync(rulesFile, rulesTemplate);
-
-  vscode.window.showInformationMessage(
-    'Added .claude/rules/rampify.md. Reference it from CLAUDE.md so Claude Code follows the spec workflow.',
-    'Open File'
-  ).then(action => {
+  const openFile = (action: string | undefined) => {
     if (action === 'Open File') {
       vscode.workspace.openTextDocument(rulesFile).then(doc => vscode.window.showTextDocument(doc));
     }
-  });
+  };
+
+  if (!fs.existsSync(rulesFile)) {
+    if (!opts.create) { return; }
+    fs.mkdirSync(rulesDir, { recursive: true });
+    fs.writeFileSync(rulesFile, rulesTemplate);
+    vscode.window.showInformationMessage(
+      'Added .claude/rules/rampify.md. Reference it from CLAUDE.md so Claude Code follows the spec workflow.',
+      'Open File'
+    ).then(openFile);
+    return;
+  }
+
+  const state = rulesState(fs.readFileSync(rulesFile, 'utf8'), rulesTemplate);
+  if (state === 'current') { return; }
+  if (state === 'outdated') {
+    fs.writeFileSync(rulesFile, rulesTemplate);
+    vscode.window.showInformationMessage('Updated .claude/rules/rampify.md with Rampify\'s latest guidance for Claude Code.', 'Open File').then(openFile);
+    return;
+  }
+  // Edited: ask once per new version, never replace silently.
+  const asked = 'rampify.rulesUpdateAsked';
+  const version = rulesHash(rulesTemplate);
+  if (extContext.globalState.get<string>(asked) === version) { return; }
+  await extContext.globalState.update(asked, version);
+  const action = await vscode.window.showInformationMessage(
+    'Rampify has new guidance for Claude Code, but your .claude/rules/rampify.md has edits. Replace it with the new version?',
+    'Replace',
+    'Open File'
+  );
+  if (action === 'Replace') {
+    fs.writeFileSync(rulesFile, rulesTemplate);
+    vscode.window.showInformationMessage('Replaced .claude/rules/rampify.md with Rampify\'s latest guidance.');
+  } else {
+    openFile(action);
+  }
 }

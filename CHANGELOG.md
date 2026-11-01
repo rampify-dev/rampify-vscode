@@ -2,6 +2,20 @@
 
 All notable changes to the Rampify VS Code extension will be documented in this file.
 
+## [0.14.0] - 2026-11-01
+
+### Added
+- Your goals come first in the Specs list. Each one opens to the open specs that serve it, and a spec that serves a goal says so
+- A bigger spec shows how far along its parts are ("5 of 8 done") and opens to them, each with its status; a part says which spec it belongs to
+
+### Changed
+- Spec statuses read the same as on the dashboard's new Specs page: In progress, Done (built, not live yet), Live (live on your site) and Not doing. Ideas and Planned are unchanged
+- The Specs list orders statuses the way the dashboard does: Ideas first, then In progress, Planned, Done, Live and Not doing
+- The rules file the extension writes for Claude Code tells your AI tool to link a spec to the bigger one it's part of (`parent_spec_id`) instead of writing "Part of ..." in its description, so the Specs page can show the bigger spec's progress
+
+### Fixed
+- An existing `.claude/rules/rampify.md` now gets Rampify's newer guidance. Before, the file was written once and never updated. A file you haven't edited is updated on start, with a notice; one you've edited is only replaced if you say so, and you're asked once per new version
+
 ## [0.13.0] - 2026-10-28
 
 ### Added

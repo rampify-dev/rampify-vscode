@@ -14,6 +14,7 @@ Every change traces back to a Rampify feature spec. Before writing code:
 
 1. **Discuss** the problem, investigate the codebase, understand scope.
 2. **Create the spec** via `mcp__rampify__create_feature_spec`. Small specs are fine — a one-task spec for a one-commit fix is the right shape. The friction of creating a tiny spec is much lower than the friction of an unattributed commit later.
+   When the work is one part of a bigger piece (an umbrella spec split into stages), pass `parent_spec_id` with the umbrella's id rather than writing "Part of ..." in the description. The Specs page then shows the umbrella's progress and lists its parts.
 3. **Wait for explicit user approval** before writing any code. The spec IS the plan.
 
 Anti-patterns:

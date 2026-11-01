@@ -93,8 +93,18 @@ export interface FeatureSpec {
   work_domain: 'marketing' | 'product' | null;
   /** Dashboard link for this spec (production host), set by the API. */
   dashboard_url: string | null;
+  /** The goal it serves (a project's active goal), if any. */
+  focus_id?: string | null;
+  /** The bigger spec it's part of (an umbrella), if any. */
+  parent_spec_id?: string | null;
   created_at: string;
   updated_at: string;
+}
+
+/** A project's active goal, as the spec list returns it with ?include=goals. */
+export interface Goal {
+  id: string;
+  title: string;
 }
 
 export interface ApiError {
