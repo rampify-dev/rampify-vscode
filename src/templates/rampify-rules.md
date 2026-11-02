@@ -26,7 +26,8 @@ Anti-patterns:
 ## As you work
 
 - Mark a task `in_progress` before its first edit (via `update_spec_task`).
-- Mark it `completed` after the commit lands locally.
+- When a task's work is done: commit it, call `link_commit`, then mark it `completed`. If the work isn't committed yet, ask the user whether to commit before you mark it done. Work outside a git repo (an edit in a site builder or CMS) has nothing to link.
+- A `commit_prompt` in an update reply means the spec has no commit linked yet: follow it.
 - On the spec's first task started, move the spec from `planned → in_progress` (via `update_feature_spec`).
 
 ## After every commit that advances a spec

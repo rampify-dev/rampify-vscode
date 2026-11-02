@@ -14,6 +14,7 @@ export const RULES_VERSIONS = [
   '7a3402dac9a08c7326dac24f27e37c96b0b30455f924f8264516a71110caa7ee',
   '178b3bbb942096ec82733699f3610a06e9c09661f648c4a3c6e7f5a1a7b4a4b1',
   '393229f6aa12d46b78b3678377fdfca60908da304fc83aabcab4aafba0a4215b',
+  'e1e72828f957a89953dfbed1bd13c474e8ef6daade1978bce2a5e03fc5e1e1e1',
 ] as const;
 
 export type RulesState = 'current' | 'outdated' | 'edited';

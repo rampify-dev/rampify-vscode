@@ -2,6 +2,11 @@
 
 All notable changes to the Rampify VS Code extension will be documented in this file.
 
+## [0.14.1] - 2026-11-01
+
+### Changed
+- The rules file the extension writes for Claude Code says what to do when a task's work is done: commit it, link the commit to the spec, then mark the task done. If the work isn't committed yet, your AI tool asks you before marking it done, and work outside a git repo (an edit in a site builder or CMS) skips the commit. An existing rules file you haven't edited updates on start
+
 ## [0.14.0] - 2026-11-01
 
 ### Added
